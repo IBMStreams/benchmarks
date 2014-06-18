@@ -4,7 +4,12 @@ The IBMStreams benchmarks project contains performance benchmark applications fo
 
 Each benchmark is in a separate directory.
 
-To get started, refer to wiki: 
+The project contains the following two benchmarks:
 
-https://github.com/IBMStreams/benchmarks/wiki
-�
+1.  Email Processing Application using Infosphere Streams
+2.  Email Processing Application using Apache Storm.
+
+These two benchmarks were used as part of this performance analysis report:
+
+https://developer.ibm.com/streamsdev/wp-content/uploads/sites/15/2014/04/Streams-and-Storm-April-2014-Final.pdf
+
