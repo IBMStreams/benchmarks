@@ -7,7 +7,7 @@ Each benchmark is in a separate directory.
 The project contains the following two benchmarks:
 
 1.  Email Processing Application using Infosphere Streams
-2.  Email Processing Application using Apache Storm.
+2.  Email Processing Application using Apache Storm
 
 These two benchmarks were used as part of this performance analysis report:
 
