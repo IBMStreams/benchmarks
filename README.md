@@ -4,7 +4,7 @@ The IBMStreams benchmarks project contains performance benchmark applications fo
 
 Each benchmark is in a separate directory.
 
-To get started: 
+To get started, refer to wiki: 
 
 https://github.com/IBMStreams/benchmarks/wiki
 �
