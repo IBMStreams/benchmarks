@@ -1,0 +1,143 @@
+<!--
+*******************************************************************************
+* Copyright (C)2014, International Business Machines Corporation and          *
+* others. All Rights Reserved.                                                *
+******************************************************************************* 
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.ibm.storm.email.benchmark</groupId>
+	<artifactId>storm-email-benchmark</artifactId>
+	<version>1.0</version>
+	<packaging>jar</packaging>
+
+	<name>storm-email-benchmark</name>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<storm.version>0.8.2</storm.version>
+        <junit.version>3.8.1</junit.version>
+        <avro.version>1.7.4</avro.version>
+        <commons.version>3.2.1</commons.version>
+        <log4j.version>1.2.16</log4j.version>
+        <logback.version>1.0.6</logback.version>
+        <mail.version>1.4.7</mail.version>
+        <lang.commons.version>3.3.2</lang.commons.version>
+	</properties>
+	<repositories>
+		<repository>
+			<id>github-releases</id>
+			<url>http://oss.sonatype.org/content/repositories/github-releases/</url>
+		</repository>
+		<repository>
+			<id>clojars.org</id>
+			<url>http://clojars.org/repo</url>
+		</repository>
+		<repository>
+  			<id>repository.jboss.org-public</id>
+  			<name>JBoss repository</name>
+  			<url>https://repository.jboss.org/nexus/content/groups/public</url>
+		</repository>
+	</repositories>
+	<dependencies>
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<version>${junit.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>storm</groupId>
+			<artifactId>storm</artifactId>
+			<version>${storm.version}</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>commons-collections</groupId>
+			<artifactId>commons-collections</artifactId>
+			<version>${commons.version}</version>
+		</dependency>
+		<dependency>
+	  		<groupId>org.apache.avro</groupId>
+	  		<artifactId>avro</artifactId>
+	  		<version>${avro.version}</version>
+  		</dependency>
+  		<dependency>
+			<groupId>log4j</groupId>
+			<artifactId>log4j</artifactId>
+			<version>${log4j.version}</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>ch.qos.logback</groupId>
+			<artifactId>logback-classic</artifactId>
+			<version>${logback.version}</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>javax.mail</groupId>
+			<artifactId>mail</artifactId>
+			<version>${mail.version}</version>			
+		</dependency>
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-lang3</artifactId>
+			<version>${lang.commons.version}</version>			
+		</dependency>
+	</dependencies>
+	<build>
+		<sourceDirectory>src/main</sourceDirectory>
+		<testSourceDirectory>src/test</testSourceDirectory>
+		<plugins>
+			<plugin>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<configuration>
+					<descriptorRefs>
+						<descriptorRef>jar-with-dependencies</descriptorRef>
+					</descriptorRefs>
+					<archive>
+						<manifest>
+							<mainClass></mainClass>
+						</manifest>
+					</archive>
+				</configuration>
+				<executions>
+					<execution>
+						<id>make-assembly</id>
+						<phase>package</phase>
+						<goals>
+							<goal>single</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>			
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<source>1.6</source>
+					<target>1.6</target>
+				</configuration>
+			</plugin>
+			<plugin>
+			  <groupId>org.apache.avro</groupId>
+			  <artifactId>avro-maven-plugin</artifactId>
+			  <version>${avro.version}</version>
+			  <executions>
+			    <execution>
+			      <phase>generate-sources</phase>
+			      <goals>
+			        <goal>schema</goal>
+			      </goals>
+			      <configuration>
+			        <sourceDirectory>${project.basedir}/src/avro/</sourceDirectory>
+			        <outputDirectory>${project.basedir}/src/main/</outputDirectory>
+			      </configuration>
+			    </execution>
+			  </executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>

@@ -1,0 +1,533 @@
+/*
+*******************************************************************************
+* Copyright (C)2014, International Business Machines Corporation and          *
+* others. All Rights Reserved.                                                *
+*******************************************************************************
+
+
+This is the SPL implementation of an email processing scenario that we are using to benchmark Streams and Storm.
+ 
+The file has the following sections:
+1. Perl scripting code to handle the preprocessor arguments (that specify various compile-time variables and control parallelism)
+2. Type definitions used throughout the program.
+3. The "StreamParallelizer" composite (modeled on the SplitParellizer example in the Streams documentation), to generate >1 parallel processing streams. 
+4. Functions used at various points in the application logic.
+5. Three composite operators that implement the main "analytics" (filter, modify, counting metrics) that are performed on the emails.
+6. The main composite that implements the graph for the application as a whole.
+
+The sequence of operators in the processing stream is as follows:
+* FileSource	reads and decompresses the dataset containing the emails
+* AvroDecode	a C++ primitive operator that deserializes each individual email, outputting a tuple of type emailTuple
+* emailFilter	a composite operator that filters out certain emails, removes non-Enron email addresses and cleans up the email bodies
+* emailModify	a composite operator that (a) finds and replaces three pre-defined strings; and (b) finds the most frequently used word in the email body
+
+	at this point, the stream splits into two:
+
+* AvroEncode	re-serializes the email using another C++ primitive oeprator
+* FileSink		compresses the resulting binary and writes it to /dev/null
+
+* emailCount		a composite operator that counts the number of characters, words, paragraphs in the email body and sends an emailMetrics tuple to ...
+* Custom(metrics)	a sink custom operator that totals the metrics for all emails
+
+All but the final custom (metrics) operator are replicated for each processing stream, when >1 are specified in the preprocessor parameters (see below).
+There is only ever one instance of the final custom (metrics) operator, as it needs to maintain state across potentially multiple streams.
+If >1 parallel streams are specified, a Filter operator is used to join the emailMetrics tuple flows from the multiple instances of the emailCount composite.
+
+The following submission time values (i.e. command line arguments specified when the program is invoked) are used:
+
+	filename			the location of the email dataset (to which ".av" will be appended, so should not be specified on the command line)
+	printWindowMetrics	whether the metrics subtotal for a specified time interval should be printed to the console (yes/no)
+	windowTime			specifies the time interval in seconds for printWindowMetrics
+	
+	printEmail			whether to print the email ID and subject of each email
+	longTime			the IDs of emails that take longer than the specified time in seconds to be processed will be printed
+
+The first 3 arguments are always required; the remaining 2 are only used if the debugCode preprocessor argument is 'yes' 
+
+Andrew Bainbridge
+IBM Software Group
+October 2013
+
+PS.  Please don't laugh too much at my attempts at writing SPL!
+
+*/
+
+//-------------------------------------------------------------------------------------//
+//------------------------ 1. Perl preprocessor argument handling ---------------------//
+//-------------------------------------------------------------------------------------//
+
+<% # Switch to Perl scripting mode
+	use integer;
+	print "// Perl Arguments in effect for mixed-mode processing\n";
+	my $argCnt = @ARGV;
+	print "// Argument count: ", $argCnt, "\n";
+	my $argIdx;
+	for ($argIdx = 0; $argIdx < $argCnt; $argIdx++) {
+		print "// \$ARGV\[", $argIdx, "\]\:", $ARGV[$argIdx], "\n";
+	}
+	my $parallelism 	= $ARGV[0];
+	my $debugCode		= $ARGV[1];
+	my $wordCount		= $ARGV[2];
+	my $wordLen			= $ARGV[3];
+	my $multFS			= $ARGV[4];
+	my $junkCheckSize	= $ARGV[5];
+%>
+// these are Perl preprocessor arguments, specified in the properties of the Main.splmm file
+// if the fifth argument is 'yes', the first argument specifies the number of parallel processing streams (using multiple copies of the email dataset
+
+// the 'wordCount' argument specifies the size of the hash table that will be used to store distinct words for the most frequent word count
+// the 'wordLen' argument specifies the maximum length of string that will be used for the most frequent word count
+// the 'junkCheckSize' argument specifies the email body size above which a check will be made for "binary junk" (see below)  
+
+<%if($debugCode eq "yes") {%>
+    //here is a comment that will only appear if $debugCode == "yes"
+    //this Perl fragment is used to exclude code that is only used for debugging and/or printing more detail stuff to the console
+<%}%>
+
+//------------------------------------------------------------------------------//
+//--------------------------- 2. Type definitions ------------------------------//
+//------------------------------------------------------------------------------//
+
+type emailTuple = tuple<rstring ID, rstring From, rstring Date, rstring Subject, rstring ToList,
+						rstring CcList, rstring BccList, rstring Body>;
+						
+type emailBin 	= tuple<blob Avro>;
+
+type intString	= tuple<list<uint8>bin>;				
+						
+type
+	emailMetrics = tuple<int64 charCount, int32 wordCount, int32 paraCount, int32 nameCount>;
+
+//------------------------------------------------------------------------------------------//
+//--------------------------- 3. StreamParallelizer composite ------------------------------//
+//------------------------------------------------------------------------------------------//
+
+composite StreamParallelizer(output out) {	
+  param    
+    type	 	$typeOut;
+    
+  graph
+
+	<%for(my $i=0; $i<$parallelism; ++$i) {%>
+    (stream<blob Avro> avroBinary<%=$i%>) = FileSource() { 
+    	param	format				: bin;
+				compression			: gzip;
+				readPunctuations	: true;
+				file				: getSubmissionTimeValue("filename") + "<%=$i%>.av";		
+		config	placement			: partitionColocation("FileSource<%=$i%>"); 
+	}
+	
+	(stream<emailTuple> emailStream<%=$i%>) = avroDecode(avroBinary<%=$i%>) {
+		config	placement			: partitionColocation("decode<%=$i%>");	
+		}
+    	
+    (stream<emailTuple> filteredEmails<%=$i%>) = emailFilter(emailStream<%=$i%>) {
+    	config placement			: partitionColocation("filter<%=$i%>");
+    }
+    
+    (stream<emailTuple> modifiedEmails<%=$i%>; stream<intString> binEmail<%=$i%>) = emailModify(filteredEmails<%=$i%>) {
+    	config placement			: partitionColocation("emailModify<%=$i%>");
+    }
+    
+    (stream<emailBin> encodedEmail<%=$i%>) = avroEncode(modifiedEmails<%=$i%>) {
+    	config placement			: partitionColocation("avroEncode<%=$i%>");
+    }
+
+	() as Sink<%=$i%> = FileSink(encodedEmail<%=$i%>) {	
+		
+		param	format				: bin;
+				compression			: gzip;
+				writePunctuations	: true;
+				file				: "/dev/null";
+		config placement			: partitionColocation("FileSink<%=$i%>");
+		}
+    
+    (stream<$typeOut> metricsOut<%=$i%>) = emailCount(binEmail<%=$i%>) {
+    	config placement			: partitionColocation("emailCount<%=$i%>");
+    }
+
+	<%}%>
+   
+    stream<$typeOut> out
+     = Filter(metricsOut0
+    <%for(my $i=1; $i<$parallelism; ++$i) {%>   
+      , metricsOut<%=$i%>  
+    <%}%>) { config	placement	: partitionColocation("Metrics"); }   
+}
+
+//-----------------------------------------------------------------------//
+//--------------------------- 4. Functions ------------------------------//
+//-----------------------------------------------------------------------//
+
+rstring fixedWidth(int32 i){
+	return substring((rstring)i + "        ", 0, 9);
+}
+
+void countWordsParas (list<uint8> bin, mutable int32 wordCount, mutable int32 paraCount) {   
+	
+		mutable int32 i=0;
+		mutable uint8 ch, prev;
+		mutable int32 len;
+		uint8 chSP = 0x20u, chNL = 0x0au;
+		
+		wordCount=0;
+		paraCount=0;
+		ch=chSP;
+		
+		len = size(bin);
+		
+		while(i < len) {
+			prev = ch;
+			
+			ch = (uint8)bin[i];
+			
+			i++;
+			if(ch == chNL) {
+				if(prev != chNL) {
+					paraCount++;
+					if(prev !=chSP) wordCount++;
+				} 
+				continue;
+			}
+			if(ch != chSP) continue;
+			wordCount++;
+			if(i >= len) break;
+			
+			while(bin[i]==chSP) {
+				i++;
+				if(i == len) break;	
+			}
+		}
+		
+		if(bin[len-1] != chSP) wordCount++;
+		if(bin[len-1] != chSP) paraCount++;		
+} 
+
+
+rstring removeNonEnron (rstring addresses) {
+	
+	mutable rstring str = "";
+	for (rstring id in tokenize(addresses, ",", false)){
+			if(findFirst(id, "enron.com") != -1) str = str + id + ", ";
+	}
+	return substring(str, 0, (length(str)-2));		// get rid of superfluous comma and space at the end of the string
+}
+
+rstring mostFreqWord (list<uint8> bin, <%if($debugCode eq "yes") {%> rstring emailID, <%}%>
+			mutable list<list<uint8>[<%=$wordLen%>]>[<%=$wordCount%>] uniques, 
+			mutable list<int32>[<%=$wordCount%>] uLen, mutable list<int32>[<%=$wordCount%>] counts ) {
+	
+	mutable int32 maxCount = 0, maxIndex = -1, index = 0, i=0, wordIndex=0, len, wl = 0, m;
+	mutable uint8 ch;
+	mutable list<uint8>[120] word = [];
+	mutable boolean match = false;
+		
+	len = size(bin);
+	
+	while(i < len) {
+		ch = bin[i]; i++;
+		if(		((ch >= 0x41u) && (ch <= 0x5au)) 
+			||	((ch >= 0x61u) && (ch <= 0x7au))
+			||	((ch >= 0x30u) && (ch <= 0x39u))) {
+					word[wl] = ch;
+					wl++;
+		}
+		else {							// check word and if new, add to list
+<%if($debugCode eq "yes") {%>	
+/*			if(wl >= <%=$wordLen%>) printStringLn("Word length over limit: " + (rstring)wl + "\t -- " 
+											+ convertToUtf8(word[0:30], "ASCII") + "\t(in email ID: " + emailID + ")");
+*/  <%}%>
+			if((wl > 3) && (wl < <%=$wordLen%>)) {			
+				//printStringLn("Word found: " + convertToUtf8(word[0:wl], "ASCII") + "\t\tlength: " + (rstring)wl);
+ 				index = -1;
+				if(wordIndex>0){
+					for(int32 n in range(wordIndex)) {
+						if(uLen[n] != wl) continue;
+						if(uniques[n][0] != word[0]) continue;
+						match = true;
+						m = 1;
+						while(m<wl) { if(uniques[n][m] != word[m]) { match = false; break; } else m++; }
+						//for(int32 j in range(wl)) if(uniques[n][j] != word[j]) { match = false; break; }
+						if(match) {index = n; break;}
+					}
+				}
+				if (index == -1) {
+					for(int32 j in range(wl)) uniques[wordIndex][j] = word[j];
+					uLen[wordIndex] = wl;
+					counts[wordIndex] = 1;
+					wordIndex++;	
+				}
+				else counts[index]++;
+			}
+			wl = 0;
+		}	
+	}
+	
+	if(wordIndex>0) {
+		for(int32 j in range(wordIndex)){
+												//if(wordIndex>8000 && counts[j]>10) printStringLn((rstring)counts[j] + "\t"
+												//		+ convertToUtf8(uniques[j][0:uLen[j]], "ASCII"));
+			if(counts[j] > maxCount) {
+				maxCount = counts[j];
+				maxIndex = j;
+			}
+		}
+	}
+<%if($debugCode eq "yes") {%>	
+//	if(wc >= <%=$wordCount%>) printStringLn("Number of words counted (exceeds <%=$wordCount%>): " + (rstring)wc + "\t\t(in email ID: " + emailID + ")");
+<%}%>
+	
+	if(maxIndex > -1) return convertToUtf8(uniques[maxIndex][0:uLen[maxIndex]], "ASCII");
+	
+	else			  return "* no repeated words longer than three characters *";
+}
+
+//---------------------------------------------------------------------------------//
+//--------------------------- 5. Composite operators ------------------------------//
+//---------------------------------------------------------------------------------//
+
+public composite emailFilter(output filteredEmails; input emailsIn) {	
+	graph
+		stream<emailTuple> filteredEmails = Custom(emailsIn) {
+			
+			//  this will do the initial "filtering" step (e.g. to remove non-enron email addresses)
+			
+			logic onTuple emailsIn		: {	if(findFirst(substring(From,0,50), "enron.com") != -1) {
+												
+												// first step: remove non-enron email addresses												
+												ToList = removeNonEnron(ToList);
+												CcList = removeNonEnron(CcList);
+												BccList = removeNonEnron(BccList);
+												
+												// second step: remove =20 and = from the end of lines
+												Body = regexReplace(Body, "=20\n" , "\n", true);									
+												Body = regexReplace(Body, "=\n" , "", true);												
+												submit(emailsIn, filteredEmails);
+											}
+
+			}
+		}
+}	
+
+public composite emailModify(output modifiedEmails, binEmail; input emailsIn) {
+	param
+		expression <list<rstring>> $NAMES	: ["Jeffrey Skilling", "Kenneth Lay", "Andrew Fastow"];
+		expression <rstring> $CTELC			: "r-encoding: base64";
+		expression <rstring> $CTEUC			: "r-Encoding: base64";		
+	graph	
+	(stream<emailTuple> modifiedEmails; stream<intString> binEmail) = Custom(emailsIn) {
+			
+			//  this is the main "Modify" step, to do name substitution and find the most common word
+					
+			logic	state						: {	mutable emailMetrics x;
+													//mutable list<uint8> bin;
+													mutable intString intBody;
+													mutable int32 index, emailLen;
+													
+													mutable list<list<uint8>[<%=$wordLen%>]>[<%=$wordCount%>] uniques = [];
+													mutable list<int32>[<%=$wordCount%>] uLen = [];
+													mutable list<int32>[<%=$wordCount%>] counts = [];
+													
+<%if($debugCode eq "yes") {%>						mutable float64 startModify;
+													mutable float64 tupleTime;
+													mutable float64 longTime = getSubmissionTimeValue("longTime");
+<%}%>																									
+			}
+					onTuple emailsIn			: {		
+<%if($debugCode eq "yes") {%>						startModify = getTimestampInSecs();
+<%}%>						
+													emailLen = length(Body);
+ 													
+ 													if(emailLen > <%=$junkCheckSize%>) {
+ 														index = findFirst(Body, $CTELC);
+														if(index == -1) index = findFirst(Body, $CTEUC);
+														if(index != -1) {
+<%if($debugCode eq "yes") {%>								printStringLn("Binary attachment found; bytes dropped: " 
+																+ (rstring)(emailLen-index) + "\t\t[email ID: " + ID + "]");
+<%}%>													
+															emailLen = index;
+														}
+														//bin = (list<uint8>)convertToBlob(Body[0:emailLen]);
+														//bin = convertFromUtf8(Body[0:emailLen], "ASCII");
+													}
+													//else bin = (list<uint8>)convertToBlob(Body);
+													intBody.bin = convertFromUtf8(Body[0:emailLen], "ASCII");
+							
+													//submit({bin=bin}, binEmail);
+													submit(intBody, binEmail);
+													
+													Subject = Subject + " [most frequent word: " 
+																		+ mostFreqWord(intBody.bin, <%if($debugCode eq "yes") {%> ID, <%}%>
+																						uniques, uLen, counts) + "]";
+	 												
+													x.nameCount = 0;
+													for (int32 i in range($NAMES)) {
+														
+														if(findFirst(Body, $NAMES[i]) != -1) x.nameCount += 1;
+														else continue;
+														
+														Body = regexReplace(Body, $NAMES[i] , "Person " 
+																					+ (rstring)(i+1), true);
+													}
+													
+													submit(emailsIn, modifiedEmails);
+								/*					
+													//this section has been moved to separate operator to allow more flexible fusion
+									
+													x.charCount = (int64)length(Body); //this should be changed to emailLen
+													countWordsParas(bin, x.wordCount, x.paraCount);
+													submit(x, metricsOut);
+								*/					
+<%if($debugCode eq "yes") {%>						tupleTime = getTimestampInSecs() - startModify;
+													if(tupleTime > longTime)
+														printStringLn("\t\t\t\t\t\t\t\t\temail ID: " + ID + " --- processing time: " + substring((rstring)tupleTime,0,6));
+													if(getSubmissionTimeValue("printEmail") == "yes") {
+														printString("email ID:\t" + ID);
+														printStringLn("\tSubject:\t" + Subject);
+													}
+<%}%>												
+														
+												}
+			//config	threadedPort		: queue(emailsIn, Sys.Wait, 400000);		
+		}
+}
+
+public composite emailCount(output metricsOut; input binEmail) {	
+	graph	
+		(stream<emailMetrics> metricsOut) = Custom(binEmail) {
+			
+			logic	state				: {	mutable emailMetrics x;
+			}
+					onTuple binEmail	: { x.charCount = (int64)size(bin);
+											countWordsParas(bin, x.wordCount, x.paraCount);
+
+											submit(x, metricsOut);		
+					}
+		}		
+}
+
+//----------------------------------------------------------------------------//
+//--------------------------- 6. Main composite ------------------------------//
+//----------------------------------------------------------------------------//
+
+composite Main {
+	
+	param
+		expression <float64> $WT	: (float64)getSubmissionTimeValue("windowTime");
+		expression <boolean> $PWM	: getSubmissionTimeValue("printWindowMetrics") == "yes";
+			
+	graph
+		
+<%if($multFS eq "yes") {%>
+		(stream<emailMetrics> metrics) = StreamParallelizer() {			
+			param
+				typeOut		: emailMetrics;
+		}
+<%}%>
+<%if($multFS ne "yes") {%>		
+		(stream<blob Avro> avroBinary) = FileSource() { 
+    	param	format				: bin;
+    			compression			: gzip;
+				readPunctuations	: true;
+				file				: getSubmissionTimeValue("filename") + ".av";			
+		config	placement			: partitionColocation("FileSource"); 
+		} 
+
+		(stream<emailTuple> emailStream) = avroDecode(avroBinary) {	
+			config	placement		: partitionColocation("avroDecode");
+		}
+	
+		(stream<emailTuple> filteredEmails) = emailFilter(emailStream) {
+    		config placement		: partitionColocation("filter");
+    	}
+    
+    	(stream<emailTuple> modifiedEmails; stream<intString> binEmail) = emailModify(filteredEmails) {
+    		config placement		: partitionColocation("emailModify");
+    	}
+    
+    	(stream<emailBin> encodedEmail) = avroEncode(modifiedEmails) {
+    		config placement			: partitionColocation("avroEncode");
+    	}
+
+		() as Sink = FileSink(encodedEmail) {	
+		
+			param	format				: bin;
+					compression			: gzip;
+					writePunctuations	: true;
+					file				: "/dev/null";
+			config placement			: partitionColocation("FileSink");
+		}
+    
+    	(stream<emailMetrics> metrics) = emailCount(binEmail) {
+    		config placement			: partitionColocation("emailCount");
+    }
+	<%}%>		
+
+		() as metricsSink = Custom(metrics) {	// this operator maintains metrics for all e-mails processed and prints them when the file is empty
+		
+			logic	state					: {	mutable emailMetrics totals = {charCount = (int64)0, wordCount = 0, paraCount = 0, nameCount = 0};
+												mutable emailMetrics period = totals;
+												mutable float64	startTime = getTimestampInSecs();
+												mutable float64 elapsedTime, now;
+												mutable float64	periodTime = startTime;
+												float64 windowTime = $WT;
+												boolean printWindowMetrics = $PWM;
+												mutable int32 periodCount = 0, emailCount = 0;
+												//mutable int64 maxBody = 0; 	
+											  }
+		
+					onTuple metrics			: { 
+												//printStringLn("Chars:\t" + (rstring)charCount + "\t Words:" + (rstring)wordCount + "\t Paras: " + (rstring)paraCount);
+										
+												totals.charCount += charCount;
+												totals.wordCount += wordCount;
+												totals.paraCount += paraCount;
+												totals.nameCount += nameCount;
+												emailCount++;
+												
+												//if(charCount > maxBody) maxBody = charCount;
+												
+												if(printWindowMetrics) {
+													
+													period.charCount += charCount;
+													period.wordCount += wordCount;
+													period.paraCount += paraCount;
+													period.nameCount += nameCount;
+													periodCount++;
+														
+													now=getTimestampInSecs();
+													if((now-periodTime)>windowTime) {
+														printString((rstring)period.charCount);
+														printString("\t" + fixedWidth(period.wordCount));
+														printString("\t" + fixedWidth(period.paraCount));
+														printString("\t" + fixedWidth(period.nameCount));
+														printString("\t" + fixedWidth(periodCount));
+														printString("\t" + fixedWidth(emailCount));
+														elapsedTime = now - periodTime;
+														printString("\t\t" + substring((rstring)elapsedTime,0,4) + "     ");
+														printStringLn("\t\t" + fixedWidth((int32)((float64)periodCount/elapsedTime)));
+													
+														periodTime = now;
+														periodCount = 0;
+														period = {charCount = (int64)0, wordCount = 0, paraCount = 0, nameCount = 0};
+													}
+												}
+											}
+					onPunct metrics			: {	
+												printStringLn("\n\nCumulative totals\n");
+												printStringLn("\tCharacters:\t\t\t" + (rstring)totals.charCount);
+												printStringLn("\tWords:\t\t\t\t" + (rstring)totals.wordCount);
+												printStringLn("\tParagraphs:\t\t\t" + (rstring)totals.paraCount);
+												printStringLn("\tNames:\t\t\t\t" + (rstring)totals.nameCount);
+												printStringLn("\temails processed:\t\t" + (rstring)emailCount);
+												elapsedTime = getTimestampInSecs()-startTime;
+												printStringLn("\tElapsed time (seconds):\t\t" + substring((rstring)elapsedTime,0,7));
+												printStringLn("\temails/sec:\t\t\t" + (rstring)(int32)((float64)emailCount/elapsedTime));
+												
+												//printStringLn("\n\tlargest body:\t" + (rstring)maxBody);
+												}
+												
+			config	placement		: partitionColocation("Metrics");
+					//threadedPort	: queue(metrics, Sys.Wait, 500000);
+		}
+}

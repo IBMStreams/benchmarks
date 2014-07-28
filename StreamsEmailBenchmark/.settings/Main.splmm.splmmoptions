@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM "http://java.sun.com/dtd/properties.dtd">
+<properties>
+<comment>Preprocessor options for mixed-mode source file: Main.splmm</comment>
+<entry key="com.ibm.streams.studio.splproject:MAXIMUM_SIZE">-1</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_DESCRIPTION_6">junkCheckSize</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_ARG_6">100000</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_DESCRIPTION_5">multiFS</entry>
+<entry key="com.ibm.streams.studio.splproject:FILE_PATH">Main.splmm</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_ARG_5">yes</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_DESCRIPTION_4">wordLen</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_ARG_4">15</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_DESCRIPTION_3">wordCount</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_ARG_3">100000</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_DESCRIPTION_2">debugCode</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_ARG_2">0</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_DESCRIPTION_1">parallelism</entry>
+<entry key="com.ibm.streams.studio.splproject:PREPROCESSOR_ARGUMENTS_ARG_1">2</entry>
+<entry key="com.ibm.streams.studio.splproject:TIME_OUT">-1</entry>
+</properties>

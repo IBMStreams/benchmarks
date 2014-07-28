@@ -1,0 +1,131 @@
+/* Additional includes go here  */
+
+#pragma SPL_NON_GENERIC_OPERATOR_IMPLEMENTATION_PROLOGUE
+
+#include "emailavro/email.hh"			// Definition of the Avro schema structures
+#include "avro/Encoder.hh"	// Avro functions
+#include "avro/Decoder.hh"	// Avro functions
+#include "avro/Reader.hh" 	// Avro functions
+
+using namespace std;
+using namespace SPL;
+
+// Constructor
+MY_OPERATOR::MY_OPERATOR()
+{
+    // Initialization code goes here   
+}
+
+// Destructor
+MY_OPERATOR::~MY_OPERATOR() 
+{
+    // Finalization code goes here
+}
+
+// Notify port readiness
+void MY_OPERATOR::allPortsReady() 
+{
+    // Notifies that all ports are ready. No tuples should be submitted before
+    // this. Source operators can use this method to spawn threads.
+
+    /*
+      createThreads(1); // Create source thread
+    */
+}
+ 
+// Notify pending shutdown
+void MY_OPERATOR::prepareToShutdown() 
+{
+    // This is an asynchronous call
+}
+
+// Processing for source and threaded operators   
+void MY_OPERATOR::process(uint32_t idx)
+{
+    // A typical implementation will loop until shutdown
+    /*
+      while(!getPE().getShutdownRequested()) {
+          // do work ...
+      }
+    */
+}
+
+// Tuple processing for mutating ports 
+void MY_OPERATOR::process(Tuple & tuple, uint32_t port)
+{
+    
+    // Access the input tuple
+    IPort0Type & ituple = static_cast<IPort0Type &>(tuple);
+    
+    // Declare a variable for our input Avro encoded Blob and the decoded data from the Avro
+    SPL::blob	inputBlob = ituple.get_Avro();
+    c::Email	emailLocal;
+    
+    // Get a count of the number of bytes in the Avro encoded blob
+    uint64_t count = inputBlob.getSize();
+          
+    // Get a pointer to the data in the blob - blob still owns the memory
+    uint8_t *ptr = (uint8_t *) inputBlob.getData();
+	       
+    // Create an Avro input stream in memory reading from the blob in the input tuple
+    std::auto_ptr<avro::InputStream> in = avro::memoryInputStream( ptr, count);
+	
+    avro::DecoderPtr d = avro::binaryDecoder();
+    d->init(*in);	
+
+    // Decode the email
+    avro::decode(*d, emailLocal);
+	
+    // Define a tuple that we're going to submit
+    OPort0Type otuple;
+	
+    // Load up the fields within the output tuple from the decoded Avro
+    otuple.get_ID()      = emailLocal.ID; 
+    otuple.get_From()	 = emailLocal.From;
+    otuple.get_Date()	 = emailLocal.Date;
+    otuple.get_Subject() = emailLocal.Subject; 
+    otuple.get_ToList()	 = emailLocal.ToList; 
+    otuple.get_CcList()	 = emailLocal.CcList;
+    otuple.get_BccList() = emailLocal.BccList;
+    otuple.get_Body()	 = emailLocal.Body;
+	
+    submit( otuple, 0);
+}
+
+// Tuple processing for non-mutating ports
+void MY_OPERATOR::process(Tuple const & tuple, uint32_t port)
+{
+    // Sample submit code
+    /* 
+      OPort0Type otuple;
+      submit(otuple, 0); // submit to output port 0
+    */
+    // Sample cast code
+    /*
+    switch(port) {
+    case 0: { 
+      IPort0Type const & ituple = static_cast<IPort0Type const&>(tuple);
+      ...
+    } break;
+    case 1: { 
+      IPort1Type const & ituple = static_cast<IPort1Type const&>(tuple);
+      ...
+    } break;
+    default: ...
+    }
+    */
+}
+
+// Punctuation processing
+void MY_OPERATOR::process(Punctuation const & punct, uint32_t port)
+{
+    /*
+      if(punct==Punctuation::WindowMarker) {
+        // ...;
+      } else if(punct==Punctuation::FinalMarker) {
+        // ...;
+      }
+    */
+}
+
+#pragma SPL_NON_GENERIC_OPERATOR_IMPLEMENTATION_EPILOGUE

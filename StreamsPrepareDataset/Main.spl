@@ -1,0 +1,44 @@
+/*
+*******************************************************************************
+* Copyright (C)2014, International Business Machines Corporation and          *
+* others. All Rights Reserved.                                                *
+*******************************************************************************
+*/
+
+type emailTuple =  tuple<rstring ID, rstring From, rstring Date, rstring Subject, rstring ToList,
+						rstring CcList, rstring BccList, rstring Body>;
+type emailBin 	=  tuple<blob Avro>;					
+
+composite Main {
+	graph
+	
+	(stream<emailTuple email> emailStream) = FileSource() { 
+    	
+    	param	format		: csv;
+				parsing		: strict;
+				file		: getSubmissionTimeValue("filename") + ".txt";
+	} 
+		
+		stream<emailTuple> InStream = Custom(emailStream) { 
+			
+			logic onTuple emailStream : { 
+submit({ID=email.ID,
+										  		  From=email.From,
+										  		  Date=email.Date,
+										  		  Subject=email.Subject,
+										  		  ToList=email.ToList,
+										  		  CcList=email.CcList,
+										  		  BccList=email.BccList,
+										  		  Body=email.Body }, InStream);
+										}
+		}
+	
+		(stream<emailBin> emailBinary) = avroEncode(InStream) { }
+		() as Sink = FileSink(emailBinary) {	
+		
+		param	format				: bin;
+				compression			: gzip;
+				writePunctuations	: true;
+				file				: getSubmissionTimeValue("filename") + ".av";
+		} 	
+}

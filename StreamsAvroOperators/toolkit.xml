@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<toolkitModel xmlns="http://www.ibm.com/xmlns/prod/streams/spl/toolkit" productVersion="3.1.0.0" xmlns:common="http://www.ibm.com/xmlns/prod/streams/spl/common" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <toolkit name="StreamsAvroOperators" requiredProductVersion="2.0" version="1.0.0">
+    <description>Toolkit Description</description>
+    <uriTable>
+      <uri index="1" value="avroEncode"/>
+      <uri index="2" value="avroDecode"/>
+    </uriTable>
+    <namespace name="">
+      <primitiveOp language="Cpp" modelUriIndex="1" name="avroEncode" public="true">
+        <description/>
+        <parametersDescription/>
+        <inputPort minNumPorts="0" optional="true" windowPunctInputMode="Oblivious">
+          <description/>
+          <windowPolicy>NonWindowed</windowPolicy>
+        </inputPort>
+        <outputPort expressionMode="Nonexistent" minNumPorts="0" optional="true" windowPunctOutputMode="Generating"/>
+      </primitiveOp>
+      <primitiveOp language="Cpp" modelUriIndex="2" name="avroDecode" public="true">
+        <description/>
+        <parametersDescription/>
+        <inputPort minNumPorts="0" optional="true" windowPunctInputMode="Oblivious">
+          <description/>
+          <windowPolicy>NonWindowed</windowPolicy>
+        </inputPort>
+        <outputPort expressionMode="Nonexistent" minNumPorts="0" optional="true" windowPunctOutputMode="Generating"/>
+      </primitiveOp>
+    </namespace>
+  </toolkit>
+
+</toolkitModel>

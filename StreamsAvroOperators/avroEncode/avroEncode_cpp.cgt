@@ -1,0 +1,145 @@
+/* Additional includes go here  */
+
+#pragma SPL_NON_GENERIC_OPERATOR_IMPLEMENTATION_PROLOGUE
+
+#include "emailavro/email.hh"			// Definition of the Avro schema structures
+#include "avro/Encoder.hh"	// Avro functions
+#include "avro/Decoder.hh"	// Avro functions
+#include "avro/Reader.hh" 	// Avro functions
+
+using namespace std;
+using namespace SPL;
+
+// Constructor
+MY_OPERATOR::MY_OPERATOR()
+{
+    // Initialization code goes here   
+}
+
+// Destructor
+MY_OPERATOR::~MY_OPERATOR() 
+{
+    // Finalization code goes here
+}
+
+// Notify port readiness
+void MY_OPERATOR::allPortsReady() 
+{
+    // Notifies that all ports are ready. No tuples should be submitted before
+    // this. Source operators can use this method to spawn threads.
+
+    /*
+      createThreads(1); // Create source thread
+    */
+}
+ 
+// Notify pending shutdown
+void MY_OPERATOR::prepareToShutdown() 
+{
+    // This is an asynchronous call
+}
+
+// Processing for source and threaded operators   
+void MY_OPERATOR::process(uint32_t idx)
+{
+    // A typical implementation will loop until shutdown
+    /*
+      while(!getPE().getShutdownRequested()) {
+          // do work ...
+      }
+    */
+}
+
+// Tuple processing for mutating ports 
+void MY_OPERATOR::process(Tuple & tuple, uint32_t port)
+{
+
+    // Declare a local C++ email structure according to our Avro schema in email.hh
+    // email.hh is generated using avrogencpp
+    c::Email emailLocal;
+    
+    // Extract the fields from the email passed in as a tuple into the C++ structure
+    IPort0Type & ituple = static_cast<IPort0Type &>(tuple);
+	
+    emailLocal.ID      = ituple.get_ID();
+    emailLocal.From    = ituple.get_From();
+    emailLocal.Date    = ituple.get_Date();
+    emailLocal.Subject = ituple.get_Subject();
+    emailLocal.ToList  = ituple.get_ToList();
+    emailLocal.CcList  = ituple.get_CcList();
+    emailLocal.BccList = ituple.get_BccList();
+    emailLocal.Body    = ituple.get_Body();	
+	
+    // Create an Avro output stream in memory
+    std::auto_ptr<avro::OutputStream> out = avro::memoryOutputStream();
+	
+    // Create an avro encoder
+    avro::EncoderPtr e = avro::binaryEncoder();
+    e->init(*out);
+	
+    // Avro encode the email
+    avro::encode(*e, emailLocal);
+	
+    // Flush any internal buffers
+    e->flush();
+	
+    // Get a count of the number of bytes in the Avro encoded stream
+    uint64_t count = out->byteCount();
+	
+    // Create an Avro input stream in memory reading from the earlier output stream
+    std::auto_ptr<avro::InputStream> in = avro::memoryInputStream(*out);
+    avro::StreamReader* reader = new avro::StreamReader( *in);
+	
+    // Malloc some memory of size count - determined earlier
+    unsigned char * ptr;
+    ptr = (unsigned char *) malloc ( count);
+		
+    // Read count bytes from the stream into our allocated memory
+    reader->readBytes( ptr, count);
+    // The Avro encoded stream is now in our locally allocated memory
+    // Submit the resulting blob to the output port
+    // Need to update the blob in the original input tuple with the new data
+    // Define a tuple that we're going to submit
+    OPort0Type otuple;
+    otuple.get_Avro().adoptData( ptr, count);
+    submit( otuple, 0);
+	
+}
+
+// Tuple processing for non-mutating ports
+void MY_OPERATOR::process(Tuple const & tuple, uint32_t port)
+{
+    // Sample submit code
+    /* 
+      OPort0Type otuple;
+      submit(otuple, 0); // submit to output port 0
+    */
+    // Sample cast code
+    /*
+    switch(port) {
+    case 0: { 
+      IPort0Type const & ituple = static_cast<IPort0Type const&>(tuple);
+      ...
+    } break;
+    case 1: { 
+      IPort1Type const & ituple = static_cast<IPort1Type const&>(tuple);
+      ...
+    } break;
+    default: ...
+    }
+    */
+}
+
+// Punctuation processing
+void MY_OPERATOR::process(Punctuation const & punct, uint32_t port)
+{
+    /*
+      if(punct==Punctuation::WindowMarker) {
+        // ...;
+      } else if(punct==Punctuation::FinalMarker) {
+        // ...;
+      }
+    */
+}
+
+#pragma SPL_NON_GENERIC_OPERATOR_IMPLEMENTATION_EPILOGUE

@@ -1,0 +1,17 @@
+{ "namespace": "com.ibm.streamsx.storm.email.benchmark.avro",
+  "type": "record",
+  "name": "Email",
+  "fields": [
+    { "name": "ID",        "type": "string" },
+    { "name": "From",      "type": "string" },
+    { "name": "Date",      "type": "string" },
+    { "name": "Subject",   "type": ["string", "null"] },
+    { "name": "ToList",    "type": "string" },
+    { "name": "CcList",    "type": ["string", "null"] },
+    { "name": "BccList",   "type": ["string", "null"] },
+    { "name": "Body",      "type": ["string", "null"] },
+    { "name": "CharCount", "type": ["int", "null"] },
+    { "name": "Wordcount", "type": ["int", "null"] },
+    { "name": "ParaCount", "type": ["int", "null"] }
+  ]
+}
