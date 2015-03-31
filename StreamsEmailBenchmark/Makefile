@@ -34,7 +34,7 @@ SPLC_TARGET__MAIN__DISTRIBUTED_CLEAN = Main-Distributed-clean
 
 #
 # InfoSphere Streams
-SPLC = $(STREAMS_INSTALL)/bin/sc
+SPLC = $(STREAMS_INSTALL)/bin/sc -a
 SPLC_INDEXER = $(STREAMS_INSTALL)/bin/spl-make-toolkit
 SPLC_TOOLKIT_XML = toolkit.xml
 SPLC_NO_TK = --no-toolkit-indexing
