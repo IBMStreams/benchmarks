@@ -27,14 +27,14 @@ SPLC_TARGET__MAIN_CLEAN = Main-clean
 # Build Configuration: Distributed
 # Active: true
 SPLC_BUILDCONFIG__MAIN__DISTRIBUTED = Distributed
-SPLC_FLAGS__MAIN__DISTRIBUTED =  --output-directory="output/Main/Distributed" --data-directory="data"
-SPLC_ARGS__MAIN__DISTRIBUTED = 
+SPLC_FLAGS__MAIN__DISTRIBUTED = -a --output-directory="output/Main/Distributed" --data-directory=${SPLC_DATA_DIR}
+SPLC_ARGS__MAIN__DISTRIBUTED =
 SPLC_TARGET__MAIN__DISTRIBUTED = Main-Distributed
 SPLC_TARGET__MAIN__DISTRIBUTED_CLEAN = Main-Distributed-clean
 
 #
 # InfoSphere Streams
-SPLC = $(STREAMS_INSTALL)/bin/sc -a
+SPLC = $(STREAMS_INSTALL)/bin/sc
 SPLC_INDEXER = $(STREAMS_INSTALL)/bin/spl-make-toolkit
 SPLC_TOOLKIT_XML = toolkit.xml
 SPLC_NO_TK = --no-toolkit-indexing
@@ -43,16 +43,16 @@ SPLC_MODEL_ERRORS = --verbose-model-errors
 #
 # Targets
 #
-all: $(SPLC_TOOLKIT_XML) $(SPLC_TARGET__MAIN) 
+all: $(SPLC_TOOLKIT_XML) $(SPLC_TARGET__MAIN)
 
 
-clean: $(SPLC_TARGET__MAIN_CLEAN) 
+clean: $(SPLC_TARGET__MAIN_CLEAN)
 
 
-$(SPLC_TARGET__MAIN): $(SPLC_TOOLKIT_XML) $(SPLC_TARGET__MAIN__DISTRIBUTED) $(SPLC_MM_ARGS_MAIN.SPLMM)
+$(SPLC_TARGET__MAIN): $(SPLC_TOOLKIT_XML) $(SPLC_TARGET__MAIN__DISTRIBUTED)
 
 
-$(SPLC_TARGET__MAIN_CLEAN): $(SPLC_TOOLKIT_XML) $(SPLC_TARGET__MAIN__DISTRIBUTED_CLEAN) 
+$(SPLC_TARGET__MAIN_CLEAN): $(SPLC_TOOLKIT_XML) $(SPLC_TARGET__MAIN__DISTRIBUTED_CLEAN)
 
 
 #
@@ -67,7 +67,7 @@ $(SPLC_TARGET__MAIN__DISTRIBUTED_CLEAN): $(SPLC_TOOLKIT_XML)
 
 #
 # Toolkit index
-$(SPLC_TOOLKIT_XML): 
+$(SPLC_TOOLKIT_XML):
 	$(SPLC_INDEXER) -i . $(SPLC_MODEL_ERRORS) $(SPLC_MM_ARGS_MAIN.SPLMM)
 
 
