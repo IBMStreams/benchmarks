@@ -96,7 +96,7 @@ type emailTuple = tuple<rstring ID, rstring From, rstring Date, rstring Subject,
 type emailBin 	= tuple<blob Avro>;
 
 type
-	emailMetrics = tuple<int64 charCount, int32 wordCount, int32 paraCount, int32 nameCount>;
+	emailMetrics = tuple<int64 charCount, int32 wordCount, int32 paraCount>;
 
 //------------------------------------------------------------------------------------------//
 //--------------------------- 3. StreamParallelizer composite ------------------------------//
@@ -363,7 +363,7 @@ public composite emailModify(output modifiedEmails; input emailsIn) {
 
 			//  this is the main "Modify" step, to do name substitution and find the most common word
 
-			logic	state						: {	mutable emailMetrics x;
+			logic	state						: {
 													//mutable list<uint8> bin;
 													mutable intString intBody;
 													mutable int32 index, emailLen;
@@ -385,15 +385,13 @@ public composite emailModify(output modifiedEmails; input emailsIn) {
 																		+ mostFreqWord(emailsIn.intEmail.bin, <%if($debugCode eq "yes") {%> ID, <%}%>
 																						uniques, uLen, counts) + "]";
 
-                                                    // wrmadden note: emailMetrics nameCount is not submitted from here so are lost
-													x.nameCount = 0;
 													for (int32 i in range($NAMES)) {
 
-														if(findFirst(Body, $NAMES[i]) != -1) x.nameCount += 1;
-														else continue;
-
-														Body = regexReplace(Body, $NAMES[i] , "Person "
+														if(findFirst(Body, $NAMES[i]) != -1) {
+															Body = regexReplace(Body, $NAMES[i] , "Person "
 																					+ (rstring)(i+1), true);
+														}
+														
 													}
 
 													submit(emailsIn, modifiedEmails);
@@ -491,7 +489,7 @@ composite Main {
 
 		() as metricsSink = Custom(metrics) {	// this operator maintains metrics for all e-mails processed and prints them when the file is empty
 
-			logic	state					: {	mutable emailMetrics totals = {charCount = (int64)0, wordCount = 0, paraCount = 0, nameCount = 0};
+			logic	state					: {	mutable emailMetrics totals = {charCount = (int64)0, wordCount = 0, paraCount = 0};
 												mutable emailMetrics period = totals;
 												mutable float64	startTime = getTimestampInSecs();
 												mutable float64 elapsedTime, now;
@@ -508,7 +506,6 @@ composite Main {
 												totals.charCount += charCount;
 												totals.wordCount += wordCount;
 												totals.paraCount += paraCount;
-												totals.nameCount += nameCount;
 												emailCount++;
 
 												//if(charCount > maxBody) maxBody = charCount;
@@ -518,7 +515,6 @@ composite Main {
 													period.charCount += charCount;
 													period.wordCount += wordCount;
 													period.paraCount += paraCount;
-													period.nameCount += nameCount;
 													periodCount++;
 
 													now=getTimestampInSecs();
@@ -526,7 +522,6 @@ composite Main {
 														printString((rstring)period.charCount);
 														printString("\t" + fixedWidth(period.wordCount));
 														printString("\t" + fixedWidth(period.paraCount));
-														printString("\t" + fixedWidth(period.nameCount));
 														printString("\t" + fixedWidth(periodCount));
 														printString("\t" + fixedWidth(emailCount));
 														elapsedTime = now - periodTime;
@@ -535,7 +530,7 @@ composite Main {
 
 														periodTime = now;
 														periodCount = 0;
-														period = {charCount = (int64)0, wordCount = 0, paraCount = 0, nameCount = 0};
+														period = {charCount = (int64)0, wordCount = 0, paraCount = 0};
 													}
 												}
 											}
@@ -544,7 +539,6 @@ composite Main {
 												printStringLn("\tCharacters:\t\t\t" + (rstring)totals.charCount);
 												printStringLn("\tWords:\t\t\t\t" + (rstring)totals.wordCount);
 												printStringLn("\tParagraphs:\t\t\t" + (rstring)totals.paraCount);
-												printStringLn("\tNames:\t\t\t\t" + (rstring)totals.nameCount);
 												printStringLn("\temails processed:\t\t" + (rstring)emailCount);
 												elapsedTime = getTimestampInSecs()-startTime;
 												printStringLn("\tElapsed time (seconds):\t\t" + substring((rstring)elapsedTime,0,7));
