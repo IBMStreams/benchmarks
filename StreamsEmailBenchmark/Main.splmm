@@ -96,7 +96,7 @@ type emailTuple = tuple<rstring ID, rstring From, rstring Date, rstring Subject,
 type emailBin 	= tuple<blob Avro>;
 
 type
-	emailMetrics = tuple<int64 charCount, int32 wordCount, int32 paraCount, int32 nameCount>;
+	emailMetrics = tuple<int64 charCount, int32 wordCount, int32 paraCount>;
 
 //------------------------------------------------------------------------------------------//
 //--------------------------- 3. StreamParallelizer composite ------------------------------//
@@ -115,35 +115,37 @@ composite StreamParallelizer(output out) {
 				readPunctuations	: true;
 				file				: getSubmissionTimeValue("filename") + "<%=$i%>.av";
 //		config	placement			: partitionColocation("FileSource<%=$i%>");
-		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>");
+		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
 	}
 
 	(stream<emailTuple> emailStream<%=$i%>) = avroDecode(avroBinary<%=$i%>) {
 //		config	placement			: partitionColocation("decode<%=$i%>");
-		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>");
+		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
+		        threadedPort        : queue(avroBinary<%=$i%>,Sys.Wait,5);
 		}
 
     (stream<emailTuple> filteredEmails<%=$i%>) = emailFilter(emailStream<%=$i%>) {
 //    	config placement			: partitionColocation("filter<%=$i%>");
-		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>");
+		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
     }
 
     (stream<emailTuple> binEmail<%=$i%>) = emailToBin(filteredEmails<%=$i%>) {
 //    	config placement			: partitionColocation("emailBin<%=$i%>");
-		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>");
+		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
     }
 
+    @parallel(width=3)
     (stream<emailTuple> modifiedEmails<%=$i%>) = emailModify(binEmail<%=$i%>) {
-    	config placement			: partitionColocation("emailModify<%=$i%>");
+    	config placement			: partitionColocation("emailModify<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
     }
 
     (stream<$typeOut> metricsOut<%=$i%>) = emailCount(binEmail<%=$i%>) {
 //    	config placement			: partitionColocation("emailCount<%=$i%>");
-    	config placement			: partitionColocation("Metrics");
+    	config placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
     }
 
     (stream<emailBin> encodedEmail<%=$i%>) = avroEncode(modifiedEmails<%=$i%>) {
-    	config placement			: partitionColocation("avroEncode<%=$i%>");
+    	config  placement			: partitionColocation("avroEncode<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
     }
 
 	() as Sink<%=$i%> = FileSink(encodedEmail<%=$i%>) {
@@ -152,7 +154,7 @@ composite StreamParallelizer(output out) {
 				compression			: gzip;
 				writePunctuations	: true;
 				file				: "/dev/null";
-		config placement			: partitionColocation("FileSink<%=$i%>");
+		config  placement			: partitionColocation("FileSink<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
 		}
 
 
@@ -314,8 +316,8 @@ public composite emailFilter(output filteredEmails; input emailsIn) {
 												Body = regexReplace(Body, "=\n" , "", true);
 												submit(emailsIn, filteredEmails);
 											}
-
 			}
+			config	threadedPort		: queue(emailsIn, Sys.Wait, 5);
 		}
 }
 
@@ -352,6 +354,7 @@ public composite emailToBin(output convertedEmail; input emailsIn) {
 													//submit({bin=bin}, binEmail);
 													submit(emailsIn, convertedEmail);
 													}
+			config	threadedPort		: queue(emailsIn, Sys.Wait, 5);
 		}
 }
 
@@ -363,7 +366,7 @@ public composite emailModify(output modifiedEmails; input emailsIn) {
 
 			//  this is the main "Modify" step, to do name substitution and find the most common word
 
-			logic	state						: {	mutable emailMetrics x;
+			logic	state						: {
 													//mutable list<uint8> bin;
 													mutable intString intBody;
 													mutable int32 index, emailLen;
@@ -385,15 +388,13 @@ public composite emailModify(output modifiedEmails; input emailsIn) {
 																		+ mostFreqWord(emailsIn.intEmail.bin, <%if($debugCode eq "yes") {%> ID, <%}%>
 																						uniques, uLen, counts) + "]";
 
-                                                    // wrmadden note: emailMetrics nameCount is not submitted from here so are lost
-													x.nameCount = 0;
 													for (int32 i in range($NAMES)) {
 
-														if(findFirst(Body, $NAMES[i]) != -1) x.nameCount += 1;
-														else continue;
-
-														Body = regexReplace(Body, $NAMES[i] , "Person "
+														if(findFirst(Body, $NAMES[i]) != -1) {
+															Body = regexReplace(Body, $NAMES[i] , "Person "
 																					+ (rstring)(i+1), true);
+														}
+
 													}
 
 													submit(emailsIn, modifiedEmails);
@@ -414,7 +415,6 @@ public composite emailModify(output modifiedEmails; input emailsIn) {
 <%}%>
 
 												}
-			//config	threadedPort		: queue(emailsIn, Sys.Wait, 400000);
 		}
 }
 
@@ -429,6 +429,7 @@ public composite emailCount(output metricsOut; input binEmail) {
 
 											submit(x, metricsOut);
 					}
+			config	threadedPort		: queue(binEmail, Sys.Wait, 5);
 		}
 }
 
@@ -491,7 +492,7 @@ composite Main {
 
 		() as metricsSink = Custom(metrics) {	// this operator maintains metrics for all e-mails processed and prints them when the file is empty
 
-			logic	state					: {	mutable emailMetrics totals = {charCount = (int64)0, wordCount = 0, paraCount = 0, nameCount = 0};
+			logic	state					: {	mutable emailMetrics totals = {charCount = (int64)0, wordCount = 0, paraCount = 0};
 												mutable emailMetrics period = totals;
 												mutable float64	startTime = getTimestampInSecs();
 												mutable float64 elapsedTime, now;
@@ -508,7 +509,6 @@ composite Main {
 												totals.charCount += charCount;
 												totals.wordCount += wordCount;
 												totals.paraCount += paraCount;
-												totals.nameCount += nameCount;
 												emailCount++;
 
 												//if(charCount > maxBody) maxBody = charCount;
@@ -518,7 +518,6 @@ composite Main {
 													period.charCount += charCount;
 													period.wordCount += wordCount;
 													period.paraCount += paraCount;
-													period.nameCount += nameCount;
 													periodCount++;
 
 													now=getTimestampInSecs();
@@ -526,7 +525,6 @@ composite Main {
 														printString((rstring)period.charCount);
 														printString("\t" + fixedWidth(period.wordCount));
 														printString("\t" + fixedWidth(period.paraCount));
-														printString("\t" + fixedWidth(period.nameCount));
 														printString("\t" + fixedWidth(periodCount));
 														printString("\t" + fixedWidth(emailCount));
 														elapsedTime = now - periodTime;
@@ -535,7 +533,7 @@ composite Main {
 
 														periodTime = now;
 														periodCount = 0;
-														period = {charCount = (int64)0, wordCount = 0, paraCount = 0, nameCount = 0};
+														period = {charCount = (int64)0, wordCount = 0, paraCount = 0};
 													}
 												}
 											}
@@ -544,7 +542,6 @@ composite Main {
 												printStringLn("\tCharacters:\t\t\t" + (rstring)totals.charCount);
 												printStringLn("\tWords:\t\t\t\t" + (rstring)totals.wordCount);
 												printStringLn("\tParagraphs:\t\t\t" + (rstring)totals.paraCount);
-												printStringLn("\tNames:\t\t\t\t" + (rstring)totals.nameCount);
 												printStringLn("\temails processed:\t\t" + (rstring)emailCount);
 												elapsedTime = getTimestampInSecs()-startTime;
 												printStringLn("\tElapsed time (seconds):\t\t" + substring((rstring)elapsedTime,0,7));
