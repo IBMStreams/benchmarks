@@ -111,47 +111,23 @@ composite StreamParallelizer(output out) {
 	<%for(my $i=0; $i<$parallelism; ++$i) {%>
     (stream<blob Avro> avroBinary<%=$i%>) = FileSource() {
     	param	format				: bin;
-				compression			: gzip;
+//				compression			: gzip;
 				readPunctuations	: true;
 				file				: getSubmissionTimeValue("filename") + "<%=$i%>.av";
-//		config	placement			: partitionColocation("FileSource<%=$i%>");
-		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
+		config	placement			: partitionColocation("FileSource<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
+//		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
 	}
 
-	(stream<emailTuple> emailStream<%=$i%>) = avroDecode(avroBinary<%=$i%>) {
+    @parallel(width=5)
+	(stream<emailBin> encodedEmail<%=$i%>; stream<emailMetrics> metricsOut<%=$i%>) = doTheWork(avroBinary<%=$i%>) {
 //		config	placement			: partitionColocation("decode<%=$i%>");
 		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
-		        threadedPort        : queue(avroBinary<%=$i%>,Sys.Wait,5);
 		}
-
-    (stream<emailTuple> filteredEmails<%=$i%>) = emailFilter(emailStream<%=$i%>) {
-//    	config placement			: partitionColocation("filter<%=$i%>");
-		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
-    }
-
-    (stream<emailTuple> binEmail<%=$i%>) = emailToBin(filteredEmails<%=$i%>) {
-//    	config placement			: partitionColocation("emailBin<%=$i%>");
-		config	placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
-    }
-
-    @parallel(width=3)
-    (stream<emailTuple> modifiedEmails<%=$i%>) = emailModify(binEmail<%=$i%>) {
-    	config placement			: partitionColocation("emailModify<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
-    }
-
-    (stream<$typeOut> metricsOut<%=$i%>) = emailCount(binEmail<%=$i%>) {
-//    	config placement			: partitionColocation("emailCount<%=$i%>");
-    	config placement			: partitionColocation("SourceDecodeFilterBin<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
-    }
-
-    (stream<emailBin> encodedEmail<%=$i%>) = avroEncode(modifiedEmails<%=$i%>) {
-    	config  placement			: partitionColocation("avroEncode<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
-    }
 
 	() as Sink<%=$i%> = FileSink(encodedEmail<%=$i%>) {
 
 		param	format				: bin;
-				compression			: gzip;
+//				compression			: gzip;
 				writePunctuations	: true;
 				file				: "/dev/null";
 		config  placement			: partitionColocation("FileSink<%=$i%>"), hostColocation("StreamParallelizer<%=$i%>");
@@ -160,8 +136,7 @@ composite StreamParallelizer(output out) {
 
 	<%}%>
 
-    stream<$typeOut> out
-     = Filter(metricsOut0
+    stream<emailMetrics> out = Filter(metricsOut0
     <%for(my $i=1; $i<$parallelism; ++$i) {%>
       , metricsOut<%=$i%>
     <%}%>) { config	placement	: partitionColocation("Metrics"); }
@@ -298,6 +273,30 @@ rstring mostFreqWord (list<uint8> bin, <%if($debugCode eq "yes") {%> rstring ema
 //--------------------------- 5. Composite operators ------------------------------//
 //---------------------------------------------------------------------------------//
 
+public composite doTheWork(output encodedEmail, metricsOut; input emailsIn) {
+	graph
+	(stream<emailTuple> emailStream) = avroDecode(emailsIn) {
+	    config threadedPort        : queue(emailsIn,Sys.Wait,5);
+	}
+
+    (stream<emailTuple> filteredEmails) = emailFilter(emailStream) {
+    }
+
+    (stream<emailTuple> binEmail) = emailToBin(filteredEmails) {
+    }
+
+    (stream<emailMetrics> metricsOut) = emailCount(binEmail) {
+    }
+
+    (stream<emailTuple> modifiedEmails) = emailModify(binEmail) {
+    }
+
+    (stream<emailBin> encodedEmail) = avroEncode(modifiedEmails) {
+	    config threadedPort        : queue(modifiedEmails,Sys.Wait,5);
+    }
+}
+
+
 public composite emailFilter(output filteredEmails; input emailsIn) {
 	graph
 		stream<emailTuple> filteredEmails = Custom(emailsIn) {
@@ -415,6 +414,7 @@ public composite emailModify(output modifiedEmails; input emailsIn) {
 <%}%>
 
 												}
+			config	threadedPort		: queue(emailsIn, Sys.Wait, 5);
 		}
 }
 
