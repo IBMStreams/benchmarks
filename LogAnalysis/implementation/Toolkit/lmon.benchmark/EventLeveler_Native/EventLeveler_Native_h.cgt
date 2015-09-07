@@ -1,0 +1,40 @@
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+/* Additional includes go here */
+
+<%
+  use EventLevelerCommon;
+  EventLevelerCommon::verify($model);
+%>
+
+<%SPL::CodeGen::headerPrologue($model);%>
+
+class MY_OPERATOR : public MY_BASE_OPERATOR 
+{
+public:
+  // Constructor
+  MY_OPERATOR();
+
+  // Destructor
+  virtual ~MY_OPERATOR() {}
+
+  // Tuple processing for non-mutating ports
+  void process(Tuple const & tuple, uint32_t port);
+
+  // Punctuation processing
+  void process(Punctuation const & punct, uint32_t port);
+private:
+  // Members
+  uint64_t  maxTimeDiff_;
+  volatile uint64_t port0LastTimeMillis_;
+  volatile uint64_t port1LastTimeMillis_;
+}; 
+
+<%SPL::CodeGen::headerEpilogue($model);%>
+

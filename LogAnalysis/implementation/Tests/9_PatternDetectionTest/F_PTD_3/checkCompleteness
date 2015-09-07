@@ -1,0 +1,26 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+DATA_DIR=$(dirname $0)/data
+
+# check if data directory is there
+test -d $DATA_DIR || exit 1
+
+# check if there are 40 files
+if [ $(ls -1 $DATA_DIR | wc -l) -ne 40 ]; then
+    exit 1;
+fi
+
+# Check the file sizes
+for (( i=1; i<=20; i++ )); do
+    if [ $(cat "$DATA_DIR/AB$i.output-data" | wc -l) -ne 200000 ]; then
+        exit 1;
+    fi
+done

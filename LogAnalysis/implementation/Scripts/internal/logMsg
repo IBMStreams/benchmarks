@@ -1,0 +1,19 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# This script is used to log a message to the log file
+# It takes a single parameter, that being the string to be logged
+echo "`date` $1 logged to $LOG_FILE"
+if [ "x$LOG_FILE" != "x" ]; then
+	if [ ! -e $LOG_FILE ]; then
+		mkdir -p `dirname $LOG_FILE`
+		touch $LOG_FILE
+	fi
+	echo "`date` $1" >> $LOG_FILE
+fi

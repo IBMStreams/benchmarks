@@ -1,0 +1,67 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name -d <data-dir> -v"          
+    echo ""
+    echo "  -d <data-dir> : Directory where results are located"
+    echo "  -v : verbose"
+    echo ""
+    echo "untar StreamsLog.tgz files into log subdir under measurement directory"
+}
+
+DIR=`pwd`
+VERBOSE=0
+OUT_DIR="/tmp"
+CP_FILES="perf.summary.* pcm* pmu_counts_norm.csv rate.* operf.*"
+INPLACE=0
+while getopts d:hv OPT; do
+        case ${OPT} in
+                d) DIR=${OPTARG} ;;
+		h) usage;exit 1 ;;
+		v) VERBOSE=1 ;;
+        esac
+done
+
+#: ${OUT_PERF_DIR=$(readlink -f $DIR/../Results)/Perf/$TEST_NAME/perf.$NUM_EVENT_SOURCES}
+OUT_DIR=$DIR
+if [[ $VERBOSE -eq 1 ]]; then
+    echo "Input directory: $DIR"
+    echo "Output directory: $OUT_DIR"
+fi
+TESTS=`ls -d $DIR/P_* | gawk -F/ '{print $NF}'`
+if [[ $VERBOSE -eq 1 ]]; then
+    echo "Tests: $TESTS"
+fi
+
+for test in ${TESTS[@]}
+do
+    data_dir=$DIR/$test
+    
+    MEASUREMENTS=`ls -d $data_dir/perf.* | gawk -F/ '{print $NF}'`
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "Measurements: $MEASUREMENTS"
+    fi
+    for measurement in ${MEASUREMENTS[@]}; do
+	measurement_dir=$data_dir/$measurement
+	log_out_dir=$measurement_dir/logs
+	mkdir $log_out_dir
+	tar -xzf $measurement_dir/StreamsLogs.tgz -C $log_out_dir
+    done
+
+done

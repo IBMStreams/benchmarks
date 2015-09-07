@@ -1,0 +1,13 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+MY_DIR=$(dirname $0)
+source $MY_DIR/../F_ENR_1/checkCompleteness
+

@@ -1,0 +1,213 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                      
+#
+#
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name -d <data-dir> -o <output dir> -s <suffix> -v"          
+    echo ""
+    echo "  -d <data-dir> : Directory where results are located"
+    echo "  -n <num-nodes> : Number of nodes (default 1)"
+    echo "  -o <output dir> : Directory to store results."
+    echo "  -s <suffix> : Used when multiple interations are performed by constRunPerf.  This is the iteration number"
+    echo "  -v : verbose"
+    echo ""
+    echo "Produce a benchmark number and interval statistics based on a LogAnalysis run performed by autoRunPerf or constRunPerf"
+    echo "    $name ../../Results/P_BAS_1/ 2 4 4"
+}
+
+DIR=`pwd`
+VERBOSE=0
+OUT_DIR=""
+SUFFIX=""
+NUM_NODES=1
+while getopts d:hn:o:s:v OPT; do
+        case ${OPT} in
+                d) DIR=${OPTARG} ;;
+		h) usage; exit 1 ;;
+                n) NUM_NODES=${OPTARG} ;;
+                o) OUT_DIR=${OPTARG} ;;
+		s) SUFFIX=${OPTARG} ;;
+		v) VERBOSE=1 ;;
+        esac
+done
+
+
+TESTS=`ls -ld $DIR/P_* | gawk -F/ '{print $NF}'`
+
+CPUSDEFAULT=-1
+CPUS=${CPUS:-$CPUSDEFAULT}
+
+if [[ "x$OUT_DIR" == "x" ]]; then
+	OUT_DIR=$DIR/Results
+fi
+mkdir -p $OUT_DIR
+ThroughputFile="$OUT_DIR/Rate$SUFFIX.csv"
+CPUFile="$OUT_DIR/CPU$SUFFIX.csv"
+MemoryFile="$OUT_DIR/Memory$SUFFIX.csv"
+LatencyFile="$OUT_DIR/Latency$SUFFIX.csv"
+MaxLatencyFile="$OUT_DIR/MaxLatency$SUFFIX.csv"
+
+EXT=
+max=0
+testWithMaxSrc=
+min=1000
+testWithMinSrc=
+for test in ${TESTS[@]}
+do
+    data_dir=$DIR/$test
+    num=`ls -ld $data_dir/${EXT}perf.*$SUFFIX | wc -l`
+    if [[ $num -gt $max ]]; then
+	max=$num
+	testWithMaxSrc=$test
+    fi
+    if [[ $num -lt $min ]]; then
+	min=$num
+	testWithMinSrc=$test
+    fi
+done
+
+data_dir=$DIR/$testWithMaxSrc
+sources=(`ls -ld $data_dir/${EXT}perf.*$SUFFIX | gawk -F/ '{print $NF}' | gawk -F. '{print $2}' | sort -n`)
+
+if [[ $VERBOSE -eq 1 ]]; then
+	echo "Directory with max sources is $data_dir"
+fi
+
+tps_line="Test"
+cpu_line="Test"
+mem_line="Test"
+latency_line="Test"
+maxlat_line="Test"
+for s in ${sources[@]}
+do
+    tps_line="$tps_line, $s"
+    cpu_line="$mem_line, $s"
+    mem_line="$mem_line, $s"
+    latency_line="$latency_line, $s"
+    maxlat_line="$maxlat_line, $s"
+done
+echo "$tps_line" > $ThroughputFile
+echo "$cpu_line" > $CPUFile
+echo "$mem_line" > $MemoryFile
+echo "$latency_line" > $LatencyFile
+echo "$maxlat_line" > $MaxLatencyFile
+
+lnSum=0
+count=0
+for test in ${TESTS[@]}
+do
+    data_dir=$DIR/$test
+
+    if [[ $VERBOSE -eq 1 ]]; then
+    	echo "Processing $data_dir"
+    fi	
+
+    tps_line=""
+    cpu_line=""
+    mem_line="" 
+    latency_line=""
+    maxlat_line=""
+    maxThroughput=0
+    tpsint_name="tpsint"
+    sources=(`ls -ld $data_dir/${EXT}perf.*$SUFFIX | gawk -F/ '{print $NF}' | gawk -F. '{print $2}' | sort -n`)
+    interval_dir=$OUT_DIR/$test/$tpsint_name$SUFFIX
+    mkdir -p $interval_dir
+    for s in ${sources[@]}
+    do
+	this_perf_dir=$data_dir/${EXT}perf.$s$SUFFIX
+	tps_file=$this_perf_dir/perf.summary.$s.$NUM_NODES.$CPUS
+	if [[ -e $tps_file ]]; then
+#	    avgtp=`cat $tps_file | gawk -v lines=$((($s/2)+4)) '{if(NR==lines) print $4}'`
+	    avgtp=`cat $tps_file | gawk -v lines=$((($s/2)+4)) '/^Avg/{print $4}'`
+
+	    if [[ "x$avgtp" == "x" ]]; then
+		echo "no summary in $tps_file"
+		tps_line="$tps_line,"
+	    	cpu_line="$cpu_line,"
+	    	mem_line="$mem_line,"
+    		latency_line="$latency_line,"
+    		maxlat_line="$maxlat_line,"
+		continue
+	    fi
+		
+	    avglat=`cat $this_perf_dir/adjustedStats/*.source-stats.* | perl -e 'my $sum=0;my $count=0; my $max=0; while(<>){if ($_ =~ m/.* Latency\(nanosecs\): (\d+), SampleCount: (\d+).*MaxLatency: (\d+)/){$sum+=$1;$count+=$2;}};my $average=$sum/$count/1000;print("$average\n")'`
+	    maxlat=`cat $this_perf_dir/adjustedStats/*.source-stats.* | perl -e 'my $sum=0;my $count=0; my $max=0; while(<>){if ($_ =~ m/.* Latency\(nanosecs\): (\d+), SampleCount: (\d+).*MaxLatency: (\d+)/){if($3>$max){$max=$3}}};$max=$max/1000;print("$max\n")'`
+	    latency_line="$latency_line,$avglat"
+    	    maxlat_line="$maxlat_line,$maxlat"
+	    totaltp=$(($avgtp * $s))
+	    tps_line="$tps_line, $totaltp"
+	    if [[ $maxThroughput -lt $totaltp ]]; then
+		maxThroughput=$totaltp
+	    fi
+	else
+	    tps_line="$tps_line,"
+	    cpu_line="$cpu_line,"
+	    mem_line="$mem_line,"
+            latency_line="$latency_line,"
+    	    maxlat_line="$maxlat_line,"
+	    continue
+	fi
+
+	cpu_mem_file=$this_perf_dir/cpu-mem.$NUM_NODES.$CPUS
+	if [[ -e $cpu_mem_file ]]; then
+    		if [[ $VERBOSE -eq 1 ]]; then
+			echo "Getting memory and CPU from $cpu_mem_file"
+		fi
+		avg_cpu=`cat $cpu_mem_file | gawk 'BEGIN{totcpu=0;count=0} //{totcpu+=$3;count++} END{printf("%5.2f\n",totcpu/count)}'`
+	    	cpu_line="$cpu_line, $avg_cpu"
+		avg_mem=`cat $cpu_mem_file | gawk 'BEGIN{totmem=0;count=0} //{totmem+=$2;count++} END{printf("%9.2f\n",totmem/count)}'`
+	    	mem_line="$mem_line, $avg_mem"
+	else
+	    	cpu_line="$cpu_line,"
+	    	mem_line="$mem_line,"
+		echo "$cpu_mem_file does not exist!"
+	fi
+
+	interval_file=$interval_dir/${EXT}$tpsint_name.$s$SUFFIX
+	epoch_time=`head -n 1 $this_perf_dir/adjustedStats/A1.source-stats.$NUM_NODES.$CPUS | awk '//{printf("%d",$2)}'`
+	echo $s$SUFFIX > $interval_file
+	echo $epoch_time >> $interval_file
+	echo `date -d @$epoch_time +%D` >> $interval_file
+	echo `date -d @$epoch_time +%T` >> $interval_file
+	cat $this_perf_dir/rate.$NUM_NODES.$CPUS | awk '//{print $2} '>> $interval_file
+
+    done
+    echo $'test\nepoch\ndate\ntime'> $interval_dir/col1.txt
+    paste -d, $interval_dir/col1.txt $interval_dir/$tpsint_name.* > $interval_dir/$tpsint_name$SUFFIX.csv
+    echo "Throughput$tps_line" >> $interval_dir/$tpsint_name$SUFFIX.csv
+    echo "CPU$cpu_line" >> $interval_dir/$tpsint_name$SUFFIX.csv
+    echo "Memory(MB)$mem_line" >> $interval_dir/$tpsint_name$SUFFIX.csv
+    
+    echo "$test$tps_line" >> $ThroughputFile
+    echo "$test$cpu_line" >> $CPUFile
+    echo "$test$mem_line" >> $MemoryFile
+    echo "$test$latency_line" >> $LatencyFile
+    echo "$test$maxlat_line" >> $MaxLatencyFile
+    ln=$(echo "l($maxThroughput)" | bc -l)
+    lnSum=$(echo "$lnSum+$ln" | bc -l)
+    count=$(echo "$count+1" | bc -l)
+    if [[ $VERBOSE -eq 1 ]]; then
+    	echo "$test $maxThroughput"
+    fi	
+done
+
+lnMean=$(echo "$lnSum/$count" | bc -l)
+
+gMean=$(echo "e($lnMean)" | bc -l)
+echo "                                 Geometric Mean: $gMean" >> $ThroughputFile
+echo The geometric mean of tests is : $gMean

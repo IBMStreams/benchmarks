@@ -1,0 +1,116 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+<%
+my $testDir = $ARGV[0];
+my $outDir = $ARGV[1];
+%>
+
+composite OneChain(output stream<int32 count> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+(rstring)$sourceKind;
+                format : line;
+        }
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind);
+        }
+
+        stream<Event.TimestampedLog> Counted = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : (rstring) $sourceKind + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        stream<Event.TimestampedLog> Filtered = Filter(Counted) {
+            param
+                filter : eventKind==Event.Msg_Rcvd && sourceKind==Event.B;
+        }
+
+        stream<int32 count> Out = Aggregate(Filtered) {
+            window
+                Filtered : tumbling, time(1.0);
+            output
+                Out : count = Count();
+        }
+}
+
+composite OnePool(input stream<int32 count> In)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndexStart;    
+        expression<uint32> $sourceIndexEnd;    
+    graph
+
+        stream<uint64 count> Updated = Custom(In) {
+            logic
+                state : 
+                    mutable tuple<uint64 count> res = { count = 0ul };
+                onTuple In : {
+                    res.count += (uint64) In.count;
+                    submit(res, Updated);
+                }
+        }        
+
+        stream<rstring time, uint64 count> Sampled = TimedSampler(Updated) {
+            param 
+                period: 30.0; // every 30 secs
+        }
+
+        () as Sink = FileSink(Sampled) {
+            param
+                file : "<%=$outDir%>/" + "P" + (rstring)$sourceKind + ".count";
+                format : txt;
+                flush : 1u;
+        }      
+}
+
+composite Main 
+{
+  graph
+      () as Sink1 = CommonMainWithMergedPools() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                chainCore : lmon.test::OneChain; 
+                poolBCore : lmon.test::OnePool;
+                chainOutputType: tuple<int32 count>;
+                workload : lmon.benchmark::CommonWorkload; 
+      }
+
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared);
+}
+

@@ -1,0 +1,225 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+<%
+my $testDir = $ARGV[0];
+my $outDir = $ARGV[1];
+%>
+
+composite OneChainA(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+"A";
+                format : line;        
+        }        
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu : getCPU($nCPUs, $sourceIndex, Event.A); 
+        }
+
+        stream<Event.TimestampedLog> Counted = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : "A" + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        stream<uint64 timeMillis, uint32 deviceId> Out = Functor(Counted) {
+            param
+                filter: eventKind == Event.Msg_Rcvd;
+        } 
+}
+
+composite OneChainB(input stream<uint64 timeMillis, uint32 deviceId> FilteredA;
+                    output stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, 
+                                  uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious, uint64 maxMessageLatency> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+"B";
+                format : line;        
+        }        
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu : getCPU($nCPUs, $sourceIndex, Event.B); 
+        }
+
+        stream<Event.TimestampedLog> Counted = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : "B" + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        stream<uint64 timeMillis, uint32 deviceId> FilteredB = Functor(Counted) {
+            param
+                filter: eventKind == Event.Msg_Sent;
+        } 
+
+        // Match the messages and compute summaries 
+        (stream<uint8 poolIndex, uint32 deviceId, uint64 timeDelta, 
+                uint64 messageLatency, uint64 lastMessageLatency> Matched;
+         stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, 
+                uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious,
+                uint64 avgMessageLatency, uint64 minMessageLatency, uint64 maxMessageLatency> Summarized) 
+         = MessageMatcher(FilteredA; FilteredB) {
+            param
+                poolIndex : $poolIndex;
+                sourceIndex : $sourceIndex;
+                period : 30u; // send a summary every 30 secs
+        }        
+                
+        stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, 
+               uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious, uint64 maxMessageLatency> 
+            Out = Functor(Summarized) {}
+}
+
+composite Combiner(input stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, 
+                   uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious, uint64 maxMessageLatency> In)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $sourceIndexStart;
+        expression<uint32> $sourceIndexEnd;
+    graph
+        // Compute the required pool stats
+        stream<rstring time, tuple<uint64 minTimeDelta, uint8 poolIndex> allPools,
+               tuple<uint64 maxMessageLatency, uint8 sourceIndex> pool3,
+               tuple<uint64 maxMessageLatency, uint8 sourceIndex> pool4> PoolStats = Custom(In) {
+            logic
+                state : { 
+                    mutable uint8 count = 0ub;
+                    tuple<uint64 minTimeDelta, uint8 poolIndex> allPoolsInit = { minTimeDelta = 0xffffffffffffffffu, poolIndex=0ub };
+                    tuple<uint64 maxMessageLatency, uint8 sourceIndex> poolInit = { maxMessageLatency = 0ul, sourceIndex=0ub };
+                    mutable tuple<uint64 minTimeDelta, uint8 poolIndex> allPools = allPoolsInit;
+                    mutable tuple<uint64 maxMessageLatency, uint8 sourceIndex> pool3 = poolInit;
+                    mutable tuple<uint64 maxMessageLatency, uint8 sourceIndex> pool4 = poolInit;
+                }
+                onTuple In : {
+                    if(minTimeDelta<allPools.minTimeDelta) {
+                        allPools.poolIndex = In.poolIndex;
+                        allPools.minTimeDelta = In.minTimeDelta;
+                    }
+                    if(poolIndex==3ub) {
+                        if(maxMessageLatency>pool3.maxMessageLatency) {
+                            pool3.sourceIndex = sourceIndex;
+                            pool3.maxMessageLatency = maxMessageLatency;
+                        }
+                    } else { // poolIndex==4ub
+                        if(maxMessageLatency>pool4.maxMessageLatency) {
+                            pool4.sourceIndex = sourceIndex;
+                            pool4.maxMessageLatency = maxMessageLatency;
+                        }                        
+                    }
+                    if(++count==(uint8)(($sourceIndexEnd-$sourceIndexStart)+1u)) {
+                        submit({time=getTimeString(), allPools=allPools, pool3=pool3, pool4=pool4}, PoolStats);
+                        count = 0ub;
+                        allPools = allPoolsInit;
+                        pool3 = poolInit;
+                        pool4 = poolInit;
+                    }
+                }        
+        }
+        
+        () as Sink1 = FileSink(PoolStats) {
+            param
+                file : "<%=$outDir%>/" + "pool.stats";
+                format : txt;
+                flush : 1u;
+        }       
+
+        stream<int8 dummy> Beat = Beacon() { param iterations : 1u; }
+        stream<int8 dummy> Ended = Custom(Beat) {
+            logic
+                onTuple Beat: {
+                   while(!isShutdown())
+                       block(5.0); // will unblock when shutdown is requested
+                   submit({dummy=1b},Ended);
+                } 
+        }
+
+        // Compute the required source stats
+        stream<uint8 sourceIndex, uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious> SourceStats = Custom(In; Ended) {
+            logic
+                state : mutable map<uint8, tuple<uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious>> cache;
+                onTuple In : {
+                     if(sourceIndex in cache) {
+                         cache[sourceIndex].numFasterThanPrevious = numFasterThanPrevious;
+                         cache[sourceIndex].numSlowerThanPrevious = numSlowerThanPrevious;
+                     } else {
+                         cache[sourceIndex] = { numFasterThanPrevious=numFasterThanPrevious, 
+                                                numSlowerThanPrevious=numSlowerThanPrevious };
+                     }
+                }
+                onTuple Ended : {
+                    for(uint8 sourceIndex in cache) {
+                        submit( { sourceIndex=sourceIndex, 
+                                  numFasterThanPrevious=cache[sourceIndex].numFasterThanPrevious,
+                                  numSlowerThanPrevious=cache[sourceIndex].numSlowerThanPrevious }, SourceStats);
+                    }
+                    submit(Sys.WindowMarker, SourceStats);
+                }        
+        }
+       
+        () as Sink2 = FileSink(SourceStats) {
+            param
+                file : "<%=$outDir%>/" + "source.stats";
+                format : txt;
+        }       
+}
+
+composite Main 
+{
+  graph
+      () as Sink1 = CommonMainWithBSidedMergedChainsAndImplicitMergedPoolsWithCombiner() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                chainCoreA : lmon.test::OneChainA; 
+                chainCoreB : lmon.test::OneChainB; 
+                combinerCore : lmon.test::Combiner;
+                coreAOutputType : tuple<uint64 timeMillis, uint32 deviceId>;
+                coreBOutputType : tuple<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, 
+                                        uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious, uint64 maxMessageLatency>;
+                workload : lmon.benchmark::CommonWorkload;
+      }
+
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared);
+}
+

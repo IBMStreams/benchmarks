@@ -1,0 +1,39 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+if [[ $# -ne 4 ]]; then
+    usage;
+    exit 1;
+fi
+
+DIR=$(dirname $0)
+DATA_DIR=$1
+TEST_INTERVAL=$2
+NUM_NODES=$3
+NUM_CPUS=$4
+MON_FILE_TEMPLATE=$DATA_DIR/$NUM_NODES.$NUM_CPUS
+MON_FILE_TEMPLATE=$(readlink -f $MON_FILE_TEMPLATE)
+NUMASTAT_SCRIPT=$(readlink -f $DIR)/checknumastat
+NUMASTATP_SCRIPT=$(readlink -f $DIR)/numastat_p
+
+COMMAND1="ps -o pid,sess,cmd -U $USER | grep 'Scripts/internal/profile_perf' | \
+         grep -v grep | gawk '{print \$1}' | sort | \
+         awk '{print \"kill -9\", \$0}' | sh"
+COMMAND2="ps -o pid,sess,cmd -U $USER | grep 'Scripts/internal/profile_operf' | \
+         grep -v grep | gawk '{print \$1}' | sort | \
+         awk '{print \"kill -9\", \$0}' | sh"
+COMMAND3="ps -o pid,sess,cmd -U $USER | grep 'Scripts/internal/perfScheduler' | \
+         grep -v grep | gawk '{print \$1}' | sort | \
+         awk '{print \"pkill -9 -s\", \$0}' | sh"
+
+hosts=$(cat $DIR/../hosts | grep analytic | cut -f 1 -d " ")
+for host in $hosts; do
+    ssh -qx $host "$COMMAND1; $COMMAND2; $COMMAND3"
+done

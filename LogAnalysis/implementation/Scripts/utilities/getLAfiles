@@ -1,0 +1,132 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name -d <data-dir> -o <output dir> -v"          
+    echo ""
+    echo "  -d <data-dir> : Directory where results are located"
+    echo "  -I : in place, output put in source directory, overrides -o, no copies will be done"
+    echo "  -o <output dir> : Directory to store results."
+    echo "  -v : verbose"
+    echo ""
+    echo "Create and copy summary results files from files produced by autoRunPerf or constRunPerf"
+    echo "Environment variables NUM_NODES and CPUS default to 1 and -1 if not explicitly set"
+}
+
+DIR=`pwd`
+VERBOSE=0
+OUT_DIR="/tmp"
+CP_FILES="perf.summary.* pcm* pmu_counts_norm.csv rate.* operf.*"
+INPLACE=0
+while getopts d:hIo:v OPT; do
+        case ${OPT} in
+                d) DIR=${OPTARG} ;;
+		h) usage;exit 1 ;;
+		I) INPLACE=1 ;;
+                o) OUT_DIR=${OPTARG} ;;
+		v) VERBOSE=1 ;;
+        esac
+done
+
+#: ${OUT_PERF_DIR=$(readlink -f $DIR/../Results)/Perf/$TEST_NAME/perf.$NUM_EVENT_SOURCES}
+if [[ $INPLACE -eq 1 ]]; then
+	OUT_DIR=$DIR
+fi
+if [[ $VERBOSE -eq 1 ]]; then
+    echo "Input directory: $DIR"
+    echo "Output directory: $OUT_DIR"
+fi
+TESTS=`ls -d $DIR/P_* | gawk -F/ '{print $NF}'`
+if [[ $VERBOSE -eq 1 ]]; then
+    echo "Tests: $TESTS"
+fi
+
+NUM_NODESDEFAULT=1
+NUM_NODES=${NUM_NODES:-$NUM_NODESDEFAULT}
+CPUSDEFAULT=-1
+CPUS=${CPUS:-$CPUSDEFAULT}
+
+mkdir -p $OUT_DIR
+
+for test in ${TESTS[@]}
+do
+    data_dir=$DIR/$test
+    test_out_dir=$OUT_DIR/$test
+    mkdir -p $test_out_dir
+    
+    MEASUREMENTS=`ls -d $data_dir/perf.* | gawk -F/ '{print $NF}'`
+    if [[ $VERBOSE -eq 1 ]]; then
+        echo "Measurements: $MEASUREMENTS"
+    fi
+    for measurement in ${MEASUREMENTS[@]}; do
+	measurement_dir=$data_dir/$measurement
+	measurement_out_dir=$test_out_dir/$measurement
+	if [[ $INPLACE -eq 0 ]]; then
+	    mkdir -p $measurement_out_dir
+	    cp $measurement_dir/rate* $measurement_out_dir
+	    cp $measurement_dir/perf.summary* $measurement_out_dir
+	    cp $measurement_dir/monitoring.* $measurement_out_dir
+	    cp $measurement_dir/numastat* $measurement_out_dir 2>/dev/null
+	    cp $measurement_dir/PElist.txt $measurement_out_dir 2>/dev/null
+	    cp $measurement_dir/ProcessAffinityList.txt $measurement_out_dir 2>/dev/null
+	    cp $measurement_dir/StreamsLogs.tgz $measurement_out_dir 2>/dev/null
+	    cp $measurement_dir/server_*.csv $measurement_out_dir 2>/dev/null
+	fi
+	pcm_file=`ls $measurement_dir/pcm* 2>/dev/null`
+	status=$?
+	if [[ $status -eq 0 ]]; then
+	    if [ -e $pcm_file ]; then
+		cat $pcm_file | awk -F";" '/^System/{printf(";%s\n",$0)} /^Date/{printf("Epoch;%s\n",$0)} /^201/{epoch=" ";datecmd="echo -n `date -d \""$1" "$2"\" +%s`";system(datecmd);printf(";%s\n",$0)}' > $measurement_out_dir/pcm.csv
+	    fi
+	fi
+	pmu_file=$measurement_dir/pmu_counts.csv
+	if [ -e $pmu_file ]; then
+	    if [[ $VERBOSE -eq 1 ]]; then
+        	echo "Processing PMU File: $pmu_file"
+	    fi
+	    cat $pmu_file | awk 'BEGIN{FS=",";count=0;headline0="Active";headline1="CPU";headline2="Counter"} /^t:/{count++;if(count>1){if(count==2){printf("%s\n%s\n%s\n",headline0,headline1,headline2)}printf("%s\n",outline)};outline=sprintf("%s",substr($1,3))} /^[0-9]/{if($4>0.0){normCount=sprintf("%d",$3/$4*100)}else{normCount="0"}outline=outline","normCount;if(count==1){headline0=headline0",1";headline1=headline1","$1;headline2=headline2","$2}} END{printf("%s\n",outline)}' > $measurement_dir/pmu_counts_norm.csv
+	    if [[ $INPLACE -eq 0 ]]; then
+		cp $measurement_dir/pmu_counts_norm.csv $measurement_out_dir
+	    fi
+	fi
+	operf_dir=`ls -d $measurement_dir/profiling.operf.* 2>/dev/null`
+	status=$?
+	if [[ $status -eq 0 ]]; then
+	    if [ -d $operf_dir ]; then
+		if [ ! -e $measurement_dir/operf.txt ]; then
+		    opreport --session-dir=$operf_dir --merge=all --symbols -o $measurement_dir/operf.txt
+		fi
+		cp $measurement_dir/operf.txt $measurement_out_dir/operf.txt
+	    fi
+	fi
+
+	perf_file=`ls -d $measurement_dir/profiling.perf.*/profiling.perf.* 2>/dev/null`
+	status=$?
+	if [[ $status -eq 0 ]]; then
+	    if [ -e $perf_file ]; then
+		if [ ! -e $measurement_dir/perf.txt ]; then
+		    perf report -n -i $perf_file  > $measurement_dir/perf.txt
+		fi
+		cp $measurement_dir/perf.txt $measurement_out_dir/perf.txt
+	    fi
+	fi
+
+    done
+
+done
+

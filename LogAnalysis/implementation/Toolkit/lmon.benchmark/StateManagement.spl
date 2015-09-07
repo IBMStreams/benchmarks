@@ -1,0 +1,281 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+
+/* This composite operator counts events and sends out the total count when it
+ * increases by the given period.
+ * @input In port that consumes the tuples to be counted
+ * @output Out port that produces the counts
+ * @param sourceIndex event source index
+ * @param period count period
+ */
+public composite RunningEventCounter(input In;
+    output stream<uint64 count, uint32 index> Out)
+{
+    param
+        expression<uint32> $sourceIndex;
+        expression<uint64> $period;
+    graph
+        stream<uint64 count, uint32 index> Out= Custom(In) {
+            logic
+              state: {
+                mutable uint64 numProcessed = 0ul;
+                mutable tuple<uint64 count, uint32 index> res = { count = 0ul, index = $sourceIndex };
+              }
+              onTuple In: {
+                  numProcessed++;
+                  if(numProcessed % $period==0ul) {
+                      res.count = numProcessed;
+                      submit(res, Out);
+                  }
+              }
+              onPunct In: {
+                  if(currentPunct()==Sys.FinalMarker) {
+                      res.count = numProcessed;
+                      submit(res, Out);
+                  }                      
+              }            
+            
+        }
+}
+
+/* This composite operator merges event count updates from all event sources
+   into a single count. It sends updates out when the count changes, only in
+   continuous mode.
+ * @input In port that consumes the count updates from event sources
+ * @output Out port that produces the accumulated count updates
+ * @param continuous whether updates are to be sent continuously or not
+ */
+public composite RunningEventCountMerger(
+    input stream<uint64 count, uint32 index> In;
+    output stream<uint64 count> Out)
+{
+    param
+        expression<boolean> $continuous : false;
+    graph
+        stream<uint64 count> Out = Custom(In) {
+            logic
+              state: {
+                  mutable map<uint32, uint64> numProcessed = {}; // source -> count
+                  mutable tuple<uint64 count> res = { count = 0ul };
+              }
+              onTuple In: {                  
+                  mutable uint64 diff = count;
+                  if(index in numProcessed) 
+                      diff = count - numProcessed[index];
+                  numProcessed[index] = count;
+                  res.count += diff;
+                  if($continuous)
+                      submit(res, Out);
+              }
+              onPunct In: {
+                  if(currentPunct()==Sys.FinalMarker) 
+                      submit(res, Out);
+              }
+        } 
+}
+
+/* This composite operator matches B messsages with A messages that precede them
+ * in timestamp order, on a per device ID basis. It also keeps statistics and
+ * outputs them periodically, when configured for periodic updates.  
+ * @input InA port that consumes the events from an A source 
+ * @input InB port that consumes the events from the corresponding B source
+ * @output Matches port that produces the matched events. These matched events
+ * also contain the delta time between the last B message that was matched and
+ * the current B message, as well as the latency between the currently matched A
+ * and B messages.
+ * @output Summarized port that produces summary statistics. These include the
+ * minimum delta time, number of matches that were slower and faster than the
+ * last one (latency wise), average, minimum, and maximum message latency.
+ * @param poolIndex pool index of the events
+ * @param sourceIndex source index of the events
+ * @param period period of the summary updates on the second port. If set to 0,
+ * it means no updates are sent periodically.
+ */
+public composite MessageMatcher(input InA, InB; 
+    output stream<uint8 poolIndex, uint32 deviceId, uint64 timeDelta, 
+                  uint64 messageLatency, uint64 lastMessageLatency> Matched,
+           stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, 
+                  uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious,
+                  uint64 avgMessageLatency, uint64 minMessageLatency, uint64 maxMessageLatency> Summarized)
+{
+    param
+        expression<uint32> $poolIndex;    
+        expression<uint32> $sourceIndex;    
+        expression<uint32> $period : 0u; // by default we do not report summaries periodically
+    graph
+        (stream<InA> LevelledA; stream<InB> LevelledB) = EventLeveler_Native(InA; InB) {
+            param
+                // 10 thousand tuples (note: evey tuple increases timeMillis by $sourceIndex)
+                maxTimeDiff : 10000ul*(uint64)$sourceIndex; 
+        }
+        
+        stream<uint8 poolIndex, uint32 deviceId, uint64 timeDelta, 
+               uint64 messageLatency, uint64 lastMessageLatency> Matched 
+            = Custom(LevelledA as A; LevelledB as B) 
+        {
+          logic
+            state : {                
+                uint8 poolIndex = $poolIndex;
+                mutable map<uint32, list<tuple<uint64 time>>> Aq = {}; // device_id -> messages
+                mutable map<uint32, list<tuple<uint64 time, uint64 latency, boolean done>>> Bq = {}; 
+                // latency is only populated when stat==c_ (that is the message has been processed fully)
+            }
+            onTuple A : {
+                if(!(A.deviceId in Aq)) {
+                    list<tuple<uint64 time>> empty = [];
+                    Aq[A.deviceId] = empty;        
+                }
+                appendM(Aq[A.deviceId], {time=A.timeMillis});
+                if(A.deviceId in Bq) {
+                    mutable list<tuple<uint64 delta, uint64 latency, uint64 lastLatency>> res = [];   
+                    processMessages(Aq[A.deviceId], Bq[A.deviceId], res);
+                    for(tuple<uint64 delta, uint64 latency, uint64 lastLatency> ar in res) {
+                        submit({poolIndex=poolIndex,deviceId=A.deviceId,
+                                    timeDelta=ar.delta, messageLatency=ar.latency, 
+                                    lastMessageLatency=ar.lastLatency}, Matched);
+                    }
+                }
+            }
+            onTuple B : {
+                if(!(B.deviceId in Bq)) {
+                    list<tuple<uint64 time, uint64 latency, boolean done>> empty = [];
+                    Bq[B.deviceId] = empty;        
+                }
+                appendM(Bq[B.deviceId], {time=B.timeMillis, latency=0ul, done=false});
+                if(B.deviceId in Aq) {                    
+                    mutable list<tuple<uint64 delta, uint64 latency, uint64 lastLatency>> res = [];
+                    processMessages(Aq[B.deviceId], Bq[B.deviceId], res);
+                    for(tuple<uint64 delta, uint64 latency, uint64 lastLatency> ar in res) {
+                        submit({poolIndex=poolIndex,deviceId=B.deviceId,
+                                    timeDelta=ar.delta, messageLatency=ar.latency,
+                                    lastMessageLatency=ar.lastLatency}, Matched);
+                    }
+                }
+            }
+        }
+        stream<uint8 dummy> Beat = OptionalBeat() { 
+            param 
+                period: $period; 
+        }
+        stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, 
+               uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious,
+               uint64 avgMessageLatency, uint64 minMessageLatency, uint64 maxMessageLatency>
+            Summarized = Custom(Matched; Beat) {
+          logic
+              state : {
+                  mutable uint64 minTimeDelta = 0xffffffffffffffffu;
+                  mutable uint64 minMessageLatency = 0xffffffffffffffffu;
+                  mutable uint64 maxMessageLatency = 0ul;
+                  mutable uint64 latencySum = 0ul;
+                  mutable uint64 count = 0ul;
+                  mutable uint64 numFasterThanPrevious = 0ul;
+                  mutable uint64 numSlowerThanPrevious = 0ul;
+                  uint8 poolIndex = (uint8)$poolIndex;
+                  uint8 sourceIndex = (uint8)$sourceIndex;
+              }
+              onTuple Matched : {
+                  count++;
+                  if(timeDelta>0ul && timeDelta<minTimeDelta) 
+                      minTimeDelta = timeDelta;
+                  latencySum += messageLatency;
+                  if(messageLatency>maxMessageLatency)
+                      maxMessageLatency = messageLatency;
+                  if(messageLatency<minMessageLatency)
+                      minMessageLatency = messageLatency;
+                  if(lastMessageLatency!=0ul) {
+                      if(messageLatency>lastMessageLatency)
+                          numSlowerThanPrevious++;
+                      else if(messageLatency<lastMessageLatency)
+                          numFasterThanPrevious++;
+                  }
+              }
+              onTuple Beat : {
+                  if(count>0ul) {
+                      submit({poolIndex=poolIndex, sourceIndex=sourceIndex, minTimeDelta=minTimeDelta, 
+                              numFasterThanPrevious=numFasterThanPrevious, numSlowerThanPrevious=numSlowerThanPrevious,
+                              avgMessageLatency=(latencySum/count), minMessageLatency=minMessageLatency, maxMessageLatency=maxMessageLatency},
+                          Summarized);
+                  }
+                  /* Do we want to reset? It seems not.
+                     count = 0ul;
+                     latencySum = 0ul;                          
+                     minTimeDelta = 0xffffffffffffffffu;
+                     minMessageLatency = 0xffffffffffffffffu;
+                     maxMessageLatency = 0ul;
+                  */
+              }
+              onPunct Beat : {} // TODO: due to a bug in the beta, this has to exist (see Beta release notes)
+              onPunct Matched : {
+                  if(currentPunct()==Sys.FinalMarker && count>0ul) {
+                      submit({poolIndex=poolIndex, sourceIndex=sourceIndex, minTimeDelta=minTimeDelta, 
+                              numFasterThanPrevious=numFasterThanPrevious, numSlowerThanPrevious=numSlowerThanPrevious,
+                              avgMessageLatency=(latencySum/count), minMessageLatency=minMessageLatency, maxMessageLatency=maxMessageLatency},
+                          Summarized);
+                  }
+              }
+        }
+}
+
+// This is a private function that constitutes the guts of the event matching
+void processMessages(mutable list<tuple<uint64 time>> Aq,
+                     mutable list<tuple<uint64 time, uint64 latency, boolean done>> Bq, 
+                     mutable list<tuple<uint64 delta, uint64 latency, uint64 lastLatency>> res) 
+{
+    mutable int32 aIdx = 0;
+    int32 aSz = size(Aq);    
+    mutable int32 bIdx = 0;
+    int32 bSz = size(Bq);
+    if (aSz==0 || bSz==0) // nothing to do
+        return;
+    while (bIdx<bSz && aIdx<aSz) { 
+        uint64 aTime = Aq[aIdx].time;  
+        uint64 bTime = Bq[bIdx].time; 
+        if(!Bq[bIdx].done) { // if b is pending 
+            if(aTime < bTime) { // a->b 
+                uint64 delta = (bIdx==0) ? 0ul : (bTime-Bq[bIdx-1].time);
+                uint64 lastLatency = (bIdx==0) ? 0ul : Bq[bIdx-1].latency;
+                uint64 latency = bTime - aTime;
+                appendM(res, { delta=delta, latency=latency, lastLatency=lastLatency});
+                Bq[bIdx].latency = latency; // store the time delta
+                aIdx++;
+            } 
+            Bq[bIdx].done = true; // b is now completed
+        } 
+        bIdx++;
+    }
+    // remove the completed ones
+    while(--bIdx>=0) {
+        // if done and not needed by the next for latency computation
+        if(size(Bq)>bIdx+1 && Bq[bIdx+1].done) {
+            removeM(Bq, 0, bIdx);
+            break;
+        }
+    }
+    if(--aIdx>=0) 
+        removeM(Aq, 0, aIdx);
+    // Note: In a real world app, we may need to clean up messages for which an
+    // update has not been received for a long time. The exercise does not
+    // mention if missing messages exist or not.
+}    
+
+

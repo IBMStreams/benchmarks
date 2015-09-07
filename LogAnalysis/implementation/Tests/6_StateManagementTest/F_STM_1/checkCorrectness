@@ -1,0 +1,27 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+DATA_DIR=$(dirname $0)/data
+BASE_DATA_DIR=$DATA_DIR/../../../../Data/DataFiles
+
+function checkFile
+{
+    idx=$1
+    file=$DATA_DIR/P$idx.summary
+    diff $file <(echo "{count=4200000}")
+}
+
+# Check the files
+for (( i=1; i<=4; i++ )); do
+    checkFile $i  
+    if [ $? -ne 0 ]; then
+        exit 1;
+    fi
+done

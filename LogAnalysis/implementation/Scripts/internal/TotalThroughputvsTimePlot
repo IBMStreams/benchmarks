@@ -1,0 +1,188 @@
+#!/bin/bash
+#
+# Licensed Materials - Property of IBM
+# Copyright IBM Corp. 2011
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with
+# IBM Corp.
+#
+
+# Plot total throughput against time for each test run.
+# This script generates one graph per test. Each graph may have several plot line.
+# Each plot line in the graph corresponds to the throughtput vs time 
+# for the test run with specific no. of data sources
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <test-name> <num-nodes> <num-cpus> <data-dir>"
+    echo ""
+    echo "  - <test-name> : Name of the test for which graphs are to be generated."
+    echo "    'ALL' for all the tests. Specific names eg P_BAS_1 for a specific test "
+    echo "  - <num-nodes> : Number of nodes to use."
+    echo "  - <num-cpus> : No. of CPUs to use on each node." 
+    echo "      Value '-1' implies all cores will be used"
+    echo "  - <data-dir> : Root directory under which raw data of all tests is stored"
+    echo "     e.g <current_dir>/../../Results/Perf is a default location"
+    echo "     Graphs will be generated under the same root directory"
+    echo "     By default, the graphs will be generated in" 
+    echo "     <current_dir>/../../Results/Perf/Graphs"
+    echo ""
+    echo "Generate one graph for each of the user-specified tests plotting throughput against time" 
+    echo "Sample usage:"
+    echo "    $name ALL 1 -1"
+}
+
+if [[ $# -ne 4 ]]; then
+    usage;
+    exit 1;
+fi
+
+DIR=$(dirname $0)
+
+# It is either an array of all tests or a single test
+TESTS=$1
+if [[ "x$TESTS" == "xALL" ]]; then
+    TESTS=('P_BAS_1' 'P_FLT_1' 'P_FLT_2' 'P_ENR_1' 'P_ENR_2' 'P_PRJ_1' 'P_AGG_1' 'P_AGG_2' 'P_AGG_3' 'P_AGG_4' 'P_STM_1' 'P_STM_2' 'P_SPT_1' 'P_COR_1' 'P_COR_2' 'P_COR_3' 'P_PTD_1' 'P_PTD_2' 'P_PTD_3' 'P_PTD_4')
+fi
+
+# no. of nodes
+NUM_NODES=$2
+
+# no. of CPUs. Value '-1' implies all the available cores of all nodes will be used
+NUM_CPUS=$3
+
+# Common root directory where the subdirectories contain the raw data from corr. tests
+DATA_DIR=$(readlink -f $4)
+
+# The directory location of the graphs to be generated. Create one if not already exists
+GRAPH_DIR="$DATA_DIR/Graphs/totalRate_vs_time"
+mkdir -p $GRAPH_DIR
+
+for test in "${TESTS[@]}"
+do
+    # verify that the test name is valid
+    ls -d $DATA_DIR/$test >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+	echo "Cannot find $DATA_DIR/$test directory">/dev/stderr
+	continue
+    fi
+
+    # a directory is created for each test
+    mkdir -p $GRAPH_DIR/$test
+
+    # Delete old data from the GRAPH_DIR/test folder
+    rm -rf $GRAPH_DIR/$test/*
+
+    # fetch array of # of data sources for which the test was run
+    ls -d $DATA_DIR/$test/perf.* >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "Cannot find perf data for '$test'">/dev/stderr
+	continue
+    fi	
+    sourceArr=(`ls -ld $DATA_DIR/$test/perf.* | gawk -F/ '{print $NF}' | gawk -F. '{print $2}' | sort -n`)
+
+    # maintain max. throughput amongst runs using diff. no. of data sources for the test 
+    # Used to set the upper limit of Y-axis in the plot
+    maxRate=0
+
+    for sources in "${sourceArr[@]}"
+    do
+	perfDir=$DATA_DIR/$test/perf.$sources
+	if [[ ! -d $perfDir ]]; then
+	    echo "Error! $perfDir does not exist. Exiting.."
+	    exit 1
+	else
+	    start=`cat $perfDir/adjustedStats/*.source-stats.$NUM_NODES.$NUM_CPUS | gawk '{print $2;}' | sort | head -n 1`
+	    end=`cat $perfDir/adjustedStats/*.source-stats.$NUM_NODES.$NUM_CPUS | gawk '{print $2;}' | sort | tail -n 1`
+	
+	    timeA=(`cat $perfDir/adjustedStats/A1.source-stats.$NUM_NODES.$NUM_CPUS | gawk -v start=$start '{print $2-start;}'`)
+	    timeB=(`cat $perfDir/adjustedStats/B1.source-stats.$NUM_NODES.$NUM_CPUS | gawk -v start=$start '{print $2-start;}'`)
+	    sumA=(`cat $perfDir/adjustedStats/A1.source-stats.$NUM_NODES.$NUM_CPUS | cut -d " " -f 6 | sed 's/[.,].*//'`)
+	    sumB=(`cat $perfDir/adjustedStats/B1.source-stats.$NUM_NODES.$NUM_CPUS | cut -d " " -f 6 | sed 's/[.,].*//'`)
+
+	    sources=`echo $(basename $perfDir) | cut -f 2 -d "."`
+	    minCount=${#sumA[@]}
+	    if [ $minCount -gt ${#sumB[@]} ]; then minCount=${#sumB[@]}; fi
+	    for (( index=2; index<=$(($sources/2)); index++ )) 
+	    do
+		file="$perfDir/adjustedStats/A$index.source-stats.$NUM_NODES.$NUM_CPUS"
+		if [[ ! -e $file ]]; then
+		    echo $file does not exist. No data for source A$sources of test $test.
+		    continue
+		fi
+
+		count=0
+		while read x; do
+		    sumA[$count]=$((${sumA[$count]}+$x))   
+		    count=$(($count+1))
+		done < <(cat $file | cut -d " " -f 6 | sed 's/[.,].*//')
+		if [ $minCount -gt $count ]; then minCount=$count; fi
+
+		count=0
+		while read x; do
+		    timeA[$count]=$((${timeA[$count]}+$x-$start))
+		    count=$(($count+1))
+		done < <(cat $file | cut -d " " -f 2 | sed 's/[.,].*//')
+
+		file="$perfDir/adjustedStats/B$index.source-stats.$NUM_NODES.$NUM_CPUS"
+                if [[ ! -e $file ]]; then
+                    echo $file does not exist. Not data for $test for source B$sources. Continue..
+                    continue
+                fi
+
+		count=0
+		while read x; do
+		    sumB[$count]=$((${sumB[$count]}+$x))
+		    count=$(($count+1))
+		done < <(cat $file | cut -d " " -f 6 | sed 's/[.,].*//')
+		if [ $minCount -gt $count ]; then minCount=$count; fi
+		
+		count=0
+		while read x; do
+		    timeB[$count]=$((${timeB[$count]}+$x-$start))
+		    count=$(($count+1))
+		done < <(cat $file | cut -d " " -f 2 | sed 's/[.,].*//')
+            done
+
+	    echo $(((timeA[0]+timeB[0])/sources)) $((${sumA[0]}+${sumB[0]})) > $GRAPH_DIR/$test/rate.$sources.dat
+	    if [[ $maxRate -lt $((sumA[0]+sumB[0])) ]]; then
+		maxRate=$((sumA[0]+sumB[0]))
+	    fi
+
+	    for (( i = 1 ; i < $minCount ; i++ )) 
+	    do
+		if [[ $maxRate -lt $((sumA[$i]+sumB[$i])) ]]; then
+		    maxRate=$((sumA[$i]+sumB[$i]))
+		fi
+		echo $(((timeA[$i]+timeB[$i])/sources)) $((sumA[$i]+sumB[$i])) >> $GRAPH_DIR/$test/rate.$sources.dat
+	    done
+	fi
+    done
+	    
+# Generate graphs using gnuplot
+/usr/bin/gnuplot <<EOF
+reset
+set nolog y
+set terminal postscript eps noenhanced color font "helvetica,15"
+set output "`echo $GRAPH_DIR/$test/`ThroughputvsTime_$test.eps"
+set xlabel "Time (in seconds)" font "Times-Roman,20"
+set xtics font "Times-Roman, 20"
+set ylabel "Total throughput (#inputs/sec)" font "Times-Roman,20"
+yu=$maxRate+(0.1*$maxRate)
+set yrange [0:yu]
+set ytics font "Times-Roman, 20"
+set title "Throughput vs Time for `echo $test`"
+num=${#sourceArr[@]}
+values="${sourceArr[*]}"
+file(n)=sprintf("$GRAPH_DIR/$test/rate.%s.dat",word(values,n))
+tit(n)=sprintf("%s src",word(values,n))
+plot for [i=1:num] file(i) using 1:2 title tit(i) with lp lw 4
+EOF
+
+    if [[ -e $GRAPH_DIR/$test/ThroughputvsTime_$test.eps ]]; then
+  	ps2pdfwr $GRAPH_DIR/$test/ThroughputvsTime_$test.eps $GRAPH_DIR/$test/ThroughputvsTime_$test.pdf
+    fi
+done
+
+  

@@ -1,0 +1,104 @@
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+/* Additional includes go here */
+#include <fstream>
+#include <iostream>
+
+<%
+  use EventFormatterCommon;
+  EventFormatterCommon::verify($model);
+  my $file = $model->getParameterByName("file")->getValueAt(0)->getCppExpression();
+  my %tags;
+  $tags{eventId} = "E_ID";
+  $tags{deviceId} = "D_ID";
+  $tags{messageId} = "M_ID";
+  $tags{randomId} = "R";
+  $tags{customerName} = "C_NAME";
+%>
+
+<%SPL::CodeGen::implementationPrologue($model);%>
+
+using namespace std;
+
+static string getError()
+{
+    char buf[1024];
+    strerror_r(errno, buf, sizeof(buf));
+    return buf;
+}
+
+#define getLoc() static_cast<ostringstream&>(ostringstream() << __FILE__ << ":" << __LINE__).str()
+
+MY_OPERATOR::MY_OPERATOR()
+{
+
+    out_.open(<%=$file%>.c_str());
+    if(!out_)
+        throw SPLRuntimeException(getLoc(), getError());    
+}
+
+// Tuple procressing for mutating ports 
+void MY_OPERATOR::process(Tuple const & tuple, uint32_t port)
+{
+    AutoPortMutex apm(mutex_, *this);
+
+    IPort0Type const & ituple = static_cast<IPort0Type const &>(tuple);
+    
+    uint64 timeMillis = ituple.get_timeMillis();
+    time_t timeSecs = timeMillis / 1000;
+    uint32 timeMillisRemains = timeMillis % 1000;
+
+    struct tm brokenDownTime;
+    struct tm * tres = gmtime_r(&timeSecs, &brokenDownTime);
+    assert(tres!=NULL);
+    
+    size_t res = strftime(buffer_, sizeof(buffer_), "%m/%d %H:%M:%S.", &brokenDownTime);
+    assert(res!=0);
+    out_ << buffer_;
+    out_ << timeMillisRemains;
+    <%for my $attr (@{$model->getInputPortAt(0)->getAttributes()}){ 
+        my $name = $attr->getName();
+        if($name eq "sourceKind")
+        {
+    %>
+          out_ << " " << ituple.get_sourceKind().getValue();
+    <%
+        }
+        elsif($name eq "sourceIndex")
+        { 
+    %>
+           out_ << ituple.get_sourceIndex();
+    <%  }
+      }
+    %> 
+    out_ << " : ";
+
+    out_ << "EVENT=" << ituple.get_eventKind().getValue();
+    if (ituple.get_eventKind() != IPort0Type::eventKind_type::Filler) {
+    <%for my $attr (@{$model->getInputPortAt(0)->getAttributes()}){ 
+        my $name = $attr->getName();
+        my $tag = $tags{$name};
+        next unless($tag);
+    %>
+        out_ << ", <%=$tag%>=" << ituple.get_<%=$name%>();
+    <%}%>
+    }    
+    out_ << "\n";
+}
+
+void MY_OPERATOR::process(Punctuation const & punct, uint32_t port)
+{
+    if(punct==Punctuation::FinalMarker)
+        out_.flush();
+}
+    
+
+
+<%SPL::CodeGen::implementationEpilogue($model);%>
+

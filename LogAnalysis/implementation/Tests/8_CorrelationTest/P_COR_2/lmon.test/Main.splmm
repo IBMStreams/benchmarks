@@ -1,0 +1,132 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+<%
+my $testDir = $ARGV[0];
+my $outDir = $ARGV[1];
+%>
+
+composite OneChainA(output stream<uint64 messageId, uint64 deltaMillis, uint64 timeMillis> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+
+    graph
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+"A";
+                format : line;        
+        }        
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, Event.A); 
+        }
+
+        stream<Event.TimestampedLog> Counted = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : "A" + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        (stream<uint64 messageId, uint64 deltaMillis, uint64 timeMillis> Out;
+         stream<uint32 unmatched> Sampled) = CorrelateMessages(Counted) {
+             param
+                 period: 30u; // sample every 30 seconds
+        }
+}
+
+composite OneChainB(input stream<uint64 messageId, uint64 deltaMillis, uint64 timeMillis> InA)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+"B";
+                format : line;        
+        }        
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, Event.B); 
+        }
+
+        stream<Event.TimestampedLog> Counted = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : "B" + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        (stream<uint64 messageId, uint64 deltaMillis, uint64 timeMillis> InB;
+         stream<uint32 unmatched> SampledDummy) = CorrelateMessages(Counted) {
+             param
+                 period: 30u; // sample every 30 seconds
+        }
+
+        (stream<InA> LevelledA; stream<InB> LevelledB) = EventLeveler_Native(InA; InB) {
+            param
+                // 10 thousand tuples (note: evey tuple increases timeMillis by $sourceIndex)
+                maxTimeDiff : 10000ul*(uint64)$sourceIndex; 
+        }
+
+        (stream<uint64 messageId, uint64 totalDeltaMillis, uint64 timeMillis> Summarized;
+         stream<uint32 unmatched, uint64 avgTotalDeltaMillis, uint64 exceptions> Sampled) = CrossCorrelateMessages(LevelledA,LevelledB) {
+             param
+                 period: 30u; // sample every 30 seconds
+        }
+
+        stream<uint32 unmatched> Projected = Functor(Sampled) {}
+
+        () as Sink = FileSink(Projected) {
+            param
+                file : "<%=$outDir%>/" + "AB" + (rstring)$sourceIndex + ".summary";
+                format : txt;
+                flush : 1u;
+        }  
+}
+
+composite Main 
+{
+  graph
+      () as Sink1 = CommonMainWithBSidedMergedChains() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                chainCoreA : lmon.test::OneChainA; 
+                chainCoreB : lmon.test::OneChainB; 
+                coreAOutputType : tuple<uint64 messageId, uint64 deltaMillis, uint64 timeMillis>;
+                workload : lmon.benchmark::CommonWorkload;
+      }
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared);
+}
+

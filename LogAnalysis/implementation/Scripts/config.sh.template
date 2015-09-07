@@ -1,0 +1,380 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2015    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+
+# This file contains a template for a config file for running
+# the Log Analysis Benchmark.
+# Make a copy of this file and set values below appropriately.
+# By default the benchmark utilities will look for this
+# file to be named config.sh
+
+# Streams installation
+# Just leave uncommented if you already have source'd 
+# streamsprofile.sh in your shell.
+#export STREAMS_INSTALL=/myDir/InfoSphereStreams
+
+# STREAMS_ZKCONNECT must be set to a valid zookeeper 
+# connect string
+export STREAMS_ZKCONNECT=myhost:myport
+
+#STREAMS_DOMAIN_ID must be set for benchmark to work correctly
+export STREAMS_DOMAIN_ID=${USER}_LogAnalysisDomain
+
+
+# Instance name. Make sure this INSTANCE value 
+# is set to
+export INSTANCE=LogAnalysisBenchmark
+
+# Do setup (create/start domain/instance)
+# This is the default.  If overridden, it is the user's responsibility to ensure this has been done
+export LA_DO_SETUP=1
+
+# There are several test drivers that can be used:
+#    autorunPerf:  Runs all performanct tests with increasing number
+#                  of sources until throughput plateaus.
+#
+#     construnPerf: Runs all performance tests a specified number
+#                   of times within a specified range of 
+#                   number of sources.
+#
+#export TESTDRIVER=./autorunPerf
+export TESTDRIVER=./construnPerf
+
+# Number of nodes you want to run the benchmark on.
+# This number is used for calculating host placements.
+# Note: this should only be the number of nodes with analytic and or workload tags
+# It should not include management only nodes
+export NUM_NODES=1
+
+# Specify if you want to pin PEs on specific CPUs.
+# A value of -1 (default) means no pinning will occur.
+# Otherwise specify the number of CPUs (on each machine)
+# that you would like to utilize.
+# Note that if PINNUMA is set to 1, this CPUS value
+# has a subtle difference.  In this case, for even
+# distributions across numa nodes, set CPUs to
+# a multiple of 2 * the number of numa nodes.
+# For example, if there are 4 numa nodes on the machine
+# then set CPUS to one of these values: 8,16,24,etc...
+export CPUS=-1
+
+# Normally, when you specify a value other than -1 for CPUS (above)
+# the PEs will be pinned on a single CPU.
+# Specify a value of 1 for PINNUMA if you would like to run a PE
+# on CPUs within the same numa node.  See the note above for 
+# information on the CPUS setting when using PINNUMA=1.
+# Note that this setting will have no affect if CPUS is set to -1.
+# Also note, that the numactl-devel RPM must be installed if
+# PINNUMA set to 1
+export PINNUMA=0
+
+# Location to place the test results.
+# If specifying a relative path, it will be relative
+# to the Scripts directory.
+# You may also specify an absolute path.
+# NOTE: This has not yet been tested in multi-system 
+#       configurations.  Unpredictable results may occur
+#       if you specify a location on a non-shared file
+#       system if running on multiple hosts.
+export RESULTS_DIR=../Results
+
+# Location to place the log file
+# If specifying a relative path, it will be relative
+# to the Scripts directory.
+# You may also specify an absolute path.
+# NOTE: This has not yet been tested in multi-system 
+#       configurations.  Unpredictable results may occur
+#       if you specify a location on a non-shared file
+#       system if running on multiple hosts.
+export LOG_FILE=$RESULTS_DIR/log_file.txt
+
+# If any of the commands require sudo, do the following as sudo
+# visudo
+# comment out this line:
+# Defaults    requiretty
+# Command to run after instance has been created
+export LA_POST_INSTANCE_COMMAND=""
+
+# Command to run prior to submitjob
+export LA_PRE_SUBMITJOB_COMMAND=""
+
+# Additional command to run in monitoringStart
+export LA_ADDITIONAL_MONITORING_COMMAND=""
+
+# Network to use for data flows.  Specificed in CIDR notation; e.g.
+# 10.1.0.0/22
+export LA_APPLICATION_NETWORK=""
+
+# Specify TESTS to run.  If you leave this line commented out, the
+# test driver will run all tests.  Note that the list of
+# "all" tests could vary by test driver.
+# Leave this as a string -- passing arrays around
+# between processes doesn't work very good.
+# this format for autorunPerf or construnPef
+#export TESTS="P_BAS_1"
+#export TESTS="P_BAS_1 P_ENR_2"
+
+# Time to let things settle when first starting up
+# the application before doing any measurements.
+# (in seconds)
+# This applies to all test drivers
+export INITIAL_SETTLE_TIME=60
+
+# Total duration to monitor each application
+# (in minutes)
+# This applies to all test drivers
+export MONITORING_TIME=5
+
+# Time to settle between various chained data collections
+# (in seconds)
+export COLLECTION_SETTLE_TIME=30
+
+# Time interval for checking
+# memory and cpu utilization (in seconds)
+# This applies to all test drivers
+export TEST_INTERVAL=15
+
+# Number of event sources.  
+# This value is used with the testPerformance driver
+export NUMSOURCES=8
+
+# This value is used by construnPerf AND autorunPerf.
+# Low end range of sources to run with
+export MIN_NUMSOURCES=8
+
+# This value is used by construnPerf and autorunPerf.
+# construnPerf: High end range of sources to run with
+# autorunPerf: point at which to apply the stopping criteria
+export MAX_NUMSOURCES=8
+
+# This value is used by construnPerf
+# to specify how many times to run
+# each app/numSources combination
+export TEST_ITERATIONS=1
+
+################################
+################################
+# gnuplot
+################################
+################################
+# Attempt to do gnuplots at end of each execution
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export DO_GNUPLOT=0
+
+
+################################
+################################
+# operf
+################################
+################################
+# Do operf profiling
+# This is one of the "chained monitors"
+# done after throughput/latency is captured.
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export DO_OPERFPROFILE=0
+
+# Run operf with sudo.  Otherwise will just use current profile.
+# Only applies when DO_OPERFPROFILE is set to 1.
+# do the following as sudo on any machines where profiles will be collected
+# visudo
+# comment out this line:
+# Defaults    requiretty
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export OPERFPROFILE_USE_SUDO=0
+
+# Location of the operf utility.
+# Can either specify "DEFAULT"
+# or a path of the operf binary.
+# On Power systems, DEFAULT
+# will use /opt/at7.0/bin/operf
+# On Intel, will use /usr/local/bin/operf
+# Only applies when DO_OPERFPROFILE is set to 1.
+# Defaults to DERIVED
+export OPERFPROFILE_LOCATION=DEFAULT
+
+# Duration to lets operf profiling run (in seconds).
+# Only applies when DO_OPERFPROFILE is set to 1.
+# Defaults to 120
+export OPERFPROFILE_DURATION=120
+
+# Sampling perid for operf profiling
+# used with -e CPU_CLK_UNHALTED (intel)
+# and -e PM_RUN_CYC_GRP1 (power)
+# Only applies when DO_OPERFPROFILE is set to 1.
+# Defaults to 1,000,000
+export OPERFPROFILE_SAMPLEPERIOD=1000000
+
+# Counter specification for operf
+# if this is specified, OPERFPROFILE_SAMPLEPERIOD is ignored
+export OPERFPROFILE_COUNTERSPEC=""
+
+# Location of vmlinux library to use with
+# -k option on the operf command.
+# Can either specify "NONE", "DERIVED", or
+# the location of the vmlinux library.
+#   NONE -- don't use -k option
+#   DERIVED - find the location by using rpm 
+# Only applies when DO_OPERFPROFILE is set to 1.
+# Defaults to DERIVED
+export OPERFPROFILE_VMLINUX=DERIVED
+
+# Specify other additional options to pass
+# along to operf
+# Only applies when DO_OPERFPROFILE is set to 1.
+export OPERFPROFILE_ADDTIONAL_FLAGS=""
+
+# For application debug only
+# Values are "Y" or "N"
+# Only applies when DO_OPERFPROFILE is set to 1.
+# Defaults to N
+export OPERFPROFILE_DEBUG=N
+
+
+################################
+################################
+# perf profile
+################################
+################################
+# Do perf profiling
+# This is one of the "chained monitors"
+# done after throughput/latency is captured.
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export DO_PERFPROFILE=0
+
+# Run perf with sudo.  Otherwise will just use current profile.
+# Only applies when DO_PERFPROFILE is set to 1.
+# do the following as sudo on any machines where profiles will be collected
+# visudo
+# comment out this line:
+# Defaults    requiretty
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export PERFPROFILE_USE_SUDO=0
+
+# Duration to lets perf profiling run (in seconds).
+# Only applies when DO_PERFPROFILE is set to 1.
+# Defaults to 120
+export PERFPROFILE_DURATION=120
+
+# Specify other additional options to pass
+# along to perf
+# Only applies when DO_OPERFPROFILE is set to 1.
+export PERFPROFILE_ADDITIONAL_FLAGS=""
+
+
+################################
+################################
+# perf scheduler
+################################
+################################
+# Do perf scheduler
+# This is one of the "chained monitors"
+# done after throughput/latency is captured.
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+# NOTE: perf scheduler may not work right
+#       if RESULTS_DIR is in NFS (needs more investigation)
+export DO_PERFSCHEDULER=0
+
+# Duration to lets perf scheduler run (in seconds).
+# Only applies when DO_PERFSCHEDULER is set to 1.
+# Defaults to 30
+export PERFSCHEDULER_DURATION=30
+
+# Specify other additional options to pass
+# along to perf scheduler
+# Only applies when DO_PERFSCHEDULER is set to 1.
+export PERFSCHEDULER_ADDITIONAL_FLAGS=""
+
+
+################################
+################################
+# PE stats
+################################
+################################
+# Collect PE Stats
+# This is one of the "chained monitors"
+# done after throughput/latency is captured.
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export DO_PESTATS=0
+
+# Duration to collect PE stats (in seconds).
+# Only applies when DO_PESTATS is set to 1.
+# Defaults to 90
+export PESTATS_DURATION=90
+
+# Frequency for collecting PE stats (in seconds).
+# Only applies when DO_PESTATS is set to 1.
+# Defaults to 30
+export PESTATS_INTERVAL=30
+
+
+################################
+################################
+# numastat snapshots
+# Does a numastat once before
+# submitjob and once after
+# canceljob 
+################################
+################################
+# Do numastat snapshots
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export DO_NUMASTAT_SNAPSHOTS=0
+
+
+################################
+################################
+# numastat monitor
+# monitors numastat periodically
+################################
+################################
+# Numastat monitors
+# This is one of the "chained monitors"
+# done after throughput/latency is captured.
+# Values are:   
+#        0  - No (default)
+#        1  - Yes 
+export DO_NUMASTAT_MONITOR=0
+
+# Duration to collect numastat info (in seconds).
+# Only applies when DO_NUMASTAT_MONITOR is set to 1.
+# Defaults to 90
+export NUMASTAT_MONITOR_DURATION=90
+
+# Frequency for collecting numastat info (in seconds).
+# Only applies when DO_NUMASTAT_MONITOR is set to 1.
+# Defaults to 30
+export NUMASTAT_MONITOR_INTERVAL=30
+
+# Look at only processes with certain names.
+# Leaving blank will look at all processes.
+# Only applies when DO_NUMASTAT_MONITOR is set to 1.
+# Defaults to "streams-pec"
+export NUMASTAT_MONITOR_PROCESSNAME="streams-pec"
+
+

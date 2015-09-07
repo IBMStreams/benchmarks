@@ -1,0 +1,124 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+DIR=$(dirname $0)
+
+#TESTS=('P_BAS_1' 'P_FLT_1' 'P_FLT_2' 'P_ENR_1' 'P_ENR_2' 'P_PRJ_1' 'P_AGG_1' 'P_AGG_2' 'P_AGG_3' 'P_AGG_4' 'P_STM_1' 'P_STM_2' 'P_SPT_1' 'P_COR_1' 'P_COR_2' 'P_COR_3' 'P_PTD_1' 'P_PTD_2' 'P_PTD_3' 'P_PTD_4')
+
+TESTS=('P_PTD_1' 'P_PTD_2' 'P_PTD_3' )
+
+NUM_NODES=1
+HOSTS=`cat $DIR/../../Scripts/hosts | grep analytic | cut -f 1 -d " "`
+
+NUM_THREADS=`ssh $HOSTS 'cat /proc/cpuinfo | grep "^processor" | wc -l'`
+
+#-----Create Graph for total throughput of A and B vs no. of sources
+# Create directories if one does not exist
+ext=$(date -d "today" +"%Y%m%d%H%M")
+GRAPH_DIR="$DIR/plot/percpu_vs_time_haswell/Tests"
+mkdir -p $GRAPH_DIR/old/old.$ext
+
+num=`ls $GRAPH_DIR/ | grep -v '^old$' | wc -l`
+if [[ $num -gt 0 ]]; then
+    cp -R `ls -d $GRAPH_DIR/* | grep -v 'old$'` $GRAPH_DIR/old/old.$ext/
+    rm -rf `ls -d $GRAPH_DIR/* | grep -v 'old$'`
+fi
+
+CPUS=-1
+
+for host in "${HOSTS[@]}"
+do
+    for test in "${TESTS[@]}"
+    do
+	ls -d $DIR/../../Tests/*/$test >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+	    echo "Cannot find test '$test'">/dev/stderr
+	    exit 1
+	fi
+	test_dir=$(find $DIR/../../Tests -type d -name $test -not -path */output.*)
+
+	sources=0
+	while true
+	do
+	    sources=$(($sources+4))
+	    if [[ -d $test_dir/perf.$sources/CPU ]]; then
+		start=`cat $test_dir/perf.$sources/CPU/*cpumonitoring*.$NUM_NODES.$CPUS | gawk '{print $1;}' | sort | head -n 1`
+		for (( c=0;c<$NUM_THREADS;c++ ))
+		do
+		    file=$test_dir/perf.$sources/CPU/cpumonitoring.$host.cpu-$c.$NUM_NODES.$CPUS
+		    if [[ -e $file ]]; then
+			mkdir -p $GRAPH_DIR/$test/perf.$sources
+			while read x y;
+			do
+			    t=$(($x-$start))
+			    up=$((100-$y))
+			    echo "$x  $up" >> $GRAPH_DIR/$test/perf.$sources/cpu$c.dat
+			done < <(cat $file | cut -d " " -f 1,10 | sed 's/\..*//' | sed 's/,.*//' | tail -n +2 )
+		    fi
+		done
+	    else
+                if [[ "x$sources" == "x4"  ]]; then
+                    continue
+                else
+                    break
+                fi
+	    fi
+
+/usr/bin/gnuplot <<EOF
+reset
+set terminal postscript eps enhanced color font "helvetica,15"
+set output "`echo $GRAPH_DIR/$test/perf.$sources/`cpuvsTime`echo $host`.eps
+set xlabel 'Time (seconds)'
+set xrange [0:700]
+set xtics font "Times-Roman, 20"
+set ylabel 'CPU (% Utilization)'
+set yrange [0:102]
+set ytics font "Times-Roman, 20"
+num=$NUM_THREADS-1
+file(n)=sprintf("$GRAPH_DIR/$test/perf.$sources/cpu%d.dat",n)
+tit(n)=sprintf("cpu-%d",n)
+plot for [i=0:num] file(i) using 1:2 title tit(i) with lp lw 2
+
+set output "`echo $GRAPH_DIR/$test/perf.$sources/`cpuvsTime`echo $host`.part.eps
+set xlabel 'Time (seconds)'
+set xrange [0:700]
+set xtics font "Times-Roman, 20"
+set ylabel 'CPU (% Utilization)'
+set yrange [80:102]
+set ytics font "Times-Roman, 20"
+#num=$NUM_THREADS-1
+file(n)=sprintf("$GRAPH_DIR/$test/perf.$sources/cpu%d.dat",n)
+tit(n)=sprintf("cpu-%d",n)
+plot for [i=0:num] file(i) using 1:2 title tit(i) with lp lw 2
+EOF
+
+if [[ -e $GRAPH_DIR/$test/perf.$sources/cpuvsTime$host.part.eps ]]; then
+    ps2pdfwr $GRAPH_DIR/$test/perf.$sources/cpuvsTime$host.part.eps $GRAPH_DIR/$test/perf.$sources/cpuvsTime$host.part.pdf
+fi 
+
+if [[ -e $GRAPH_DIR/$test/perf.$sources/cpuvsTime$host.eps ]]; then
+    ps2pdfwr $GRAPH_DIR/$test/perf.$sources/cpuvsTime$host.eps $GRAPH_DIR/$test/perf.$sources/cpuvsTime$host.pdf
+fi
+
+	done
+    done
+done

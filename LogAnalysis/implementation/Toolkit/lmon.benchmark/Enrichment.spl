@@ -1,0 +1,153 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+use spl.file::*;
+
+/* This composite operator enriches events from a data store. This is the
+ * non-cached enricher that reads the corresponding entry directy from the file
+ * based data store, using file operations.
+ * @input In port that consumes the tuples. 
+ * @output Out port that produces the enriched tuples.
+ * @param file name of the data store file.
+ */
+public composite EventEnricherNoCache(input In; output Out) 
+{        
+    param 
+        expression<rstring> $file;
+    graph
+        stream<In, tuple<rstring customerName>> Out = Custom(In) {
+            logic
+                state: 
+                {
+                    mutable tuple<Out> result = {};
+                    mutable int32 err = 0;
+                    mutable uint64 fd = 0;
+                    mutable boolean init = false;
+                }
+                onTuple In:
+                {
+                    if(!init) {
+                        fd = fopen($file, "r", err);
+                        assert(err==0);
+                        init = true;
+                    }
+                    assignFrom(result, In);
+                    if(eventKind!=Event.Filler)
+                        result.customerName = lookupCustomerName(fd, deviceId);
+                    submit(result, Out);
+                }
+        }         
+}
+
+stateful rstring lookupCustomerName(uint64 fd, uint32 deviceId)
+{    
+    uint64 device = deviceId;
+    uint64 limit = 1000000ul;
+    mutable uint64 loc = 33ul * device + 23ul;
+    if(device > limit) 
+        loc += 2ul * (device - limit);
+    if(device >= limit)
+        loc += 1ul;
+    loc -=  33ul * 100000ul; // first 100000 are missing
+    mutable int32 err = 0;
+    fseek(fd, (int64)loc, optSEEK_SET(), err);
+    assert(err==0);
+    mutable rstring name = "";
+    freadTxt(name, fd, err);
+    assert(err==0);
+    return name;
+}
+
+/* This composite operator enriches events from a data store. This is the cached
+ * enricher that reads all entries from the file based data store into an
+ * in-memory hash table.
+ * @input In port that consumes the tuples. 
+ * @output Out port that produces the enriched tuples.
+ * @param file name of the data store file.
+ */
+public composite EventEnricherCache(input In; output Out) 
+{
+    param 
+        expression<rstring> $file;
+    graph
+        stream<In, tuple<rstring customerName>> Out = Custom(In) {
+            logic
+                state: 
+                {
+                    mutable tuple<Out> result = {};
+                    mutable int32 err = 0;
+                    mutable uint64 fd = 0;
+                    mutable map<uint32, rstring> table = {};
+                    mutable boolean init = false;
+                }
+                onTuple In:
+                {
+                    if(!init) {
+                        fd = fopen($file, "r", err);
+                        assert(err==0);
+                        lookupCustomerNames(fd, sourceIndex, table);
+                        init = true;
+                    }
+                    assignFrom(result, In);
+                    if(eventKind!=Event.Filler)  
+                        result.customerName = table[deviceId];
+                    submit(result, Out);
+                }
+        }         
+}
+
+stateful void lookupCustomerNames(uint64 fd, uint8 sourceIndex, 
+                                  mutable map<uint32, rstring> table)
+{    
+    mutable uint32 deviceId = 100000u * (uint32)sourceIndex;
+    uint64 device = deviceId;
+    uint64 limit = 1000000ul;
+    mutable uint64 loc = 33ul * device;
+    if(device > limit) 
+        loc += 2ul * (device - limit);
+    loc -=  33ul * 100000ul; // first 100000 are missing
+    mutable int32 err = 0;
+    fseek(fd, (int64)loc, optSEEK_SET(), err);
+    assert(err==0);
+    uint32 deviceIdEnd = deviceId + 100000u;    
+    while(deviceId < deviceIdEnd) {        
+        rstring line = freadLine(fd, err);
+        assert(err==0);
+        // D_ID="D100001", C_NAME="C100001"
+        mutable int32 first, second, third, fourth;
+        first = findFirst(line, "\"", 0);
+        assert(first!=-1);
+        second = findFirst(line, "\"", first+1);
+        assert(second!=-1);
+        third = findFirst(line, "\"", second+1);
+        assert(third!=-1);
+        fourth = findFirst(line, "\"", third+1);
+        assert(fourth!=-1);   
+        rstring deviceStr = substring(line, first+1, (second-first-1));
+        assert((uint32)deviceStr == deviceId);
+        rstring customerName = substring(line, third+1, (fourth-third-1));
+        table[deviceId] = customerName;
+        deviceId++;
+    }
+}
+
+

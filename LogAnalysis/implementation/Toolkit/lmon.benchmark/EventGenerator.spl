@@ -1,0 +1,186 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+use spl.file::*;
+
+/* This composite operator generates events 
+ * @output Out port that produces the generated tuples
+ * @param $sourceKind Kind of the event source, A or B
+ * @param $sourceIndex Index of the event source, [1..20]
+ * @param $workloadSize Number of events to generate
+ */
+public composite EventGenerator(output stream<Event.TimestampedLog> Out)
+{
+    param
+        expression<float64> $initDelay : 0.0;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;
+        expression<uint32> $workloadSize; // 0 means forever
+        expression<int32> $cpu;
+        expression<boolean> $midStart : false; // start auto id's from middle
+    graph
+        stream<int32 dummy> Beat = Beacon() 
+        { 
+            param
+                iterations : 1u;
+            output 
+                Beat: dummy = pinToCpu($cpu);
+        }
+        stream<Event.TimestampedLog> Out = Custom(Beat as I)
+        {
+            logic
+                onTuple I:
+                { 
+                    block($initDelay);
+                    mutable Event.TimestampedLog currentEvent =
+                    getInitialEvent($sourceKind, (uint8)$sourceIndex, $midStart);
+                    submit(currentEvent, Out);
+                    getNextEvent(currentEvent);
+                    submit(currentEvent, Out);
+                    mutable uint32 i = 1u;
+                    uint32 iters = $workloadSize;
+                    while (iters==0u || i<iters) {
+                        i++;
+                        getNextEvent(currentEvent);
+                        submit(currentEvent, Out);
+                        getNextEvent(currentEvent);
+                        submit(currentEvent, Out);
+                        if (i%10u==0u) {
+                            getFillerEvent(currentEvent);
+                            submit(currentEvent, Out);
+                        }
+                        if(isShutdown()) 
+                            break;
+                    }
+                }                
+        }
+}
+
+stateful Event.TimestampedLog getInitialEvent(
+    Event.Source sourceKind, uint8 sourceIndex, boolean midStart) 
+{
+    mutable Event.TimestampedLog evt = {
+      timeMillis = parseTimeMillis("01/01 01:01:01.001"),
+      sourceKind = sourceKind,
+      sourceIndex = sourceIndex,
+      eventKind = Event.Msg_Rcvd,
+      eventId =   midStart?1000000000ul:0ul,
+      deviceId = 0u, 
+      messageId = midStart?1000000000ul:0ul,
+      randomId = 0u,
+      timeStamp = 0l
+    };
+    evt.timeStamp = getCPUCounterInNanoSeconds();
+    if (sourceKind==Event.A) {
+        evt.deviceId = 100000u * (uint32)sourceIndex;        
+    } else { // sourceKind==Event.B
+        evt.deviceId = 100000u * (1u + (uint32)sourceIndex) - 1u;     
+    }
+    evt.randomId = getRandomId();
+    return evt;
+}
+
+stateful void getNextEvent(mutable Event.TimestampedLog evt) 
+{
+    evt.timeMillis += (uint64)evt.sourceIndex;
+    evt.eventId += 1ul;   
+    if (evt.eventKind == Event.Msg_Rcvd) {
+        evt.eventKind = Event.Msg_Sent;
+    } else { // evt.eventKind=Event.Msg_Sent | Filler
+        evt.eventKind = Event.Msg_Rcvd;
+        evt.messageId += 1ul;
+        if (evt.sourceKind==Event.A) {
+            evt.deviceId += 1u;
+            if (evt.deviceId == 100000u * (1u + (uint32)evt.sourceIndex))
+               evt.deviceId = 100000u * (uint32)evt.sourceIndex;
+        } else { // sourceKind==Event.B
+            evt.deviceId -= 1u;
+            if (evt.deviceId == 100000u * (uint32)evt.sourceIndex - 1u)
+               evt.deviceId = 100000u * (1u + (uint32)evt.sourceIndex) - 1u;
+        }        
+    }
+    evt.randomId = getRandomId();
+    evt.timeStamp = getCPUCounterInNanoSeconds();
+}
+
+stateful void getFillerEvent(mutable Event.TimestampedLog evt) 
+{
+    evt.timeMillis += (uint64)evt.sourceIndex;
+    evt.eventKind = Event.Filler;
+    evt.timeStamp = getCPUCounterInNanoSeconds();
+}
+
+stateful uint64 parseTimeMillis(rstring timeMillis) 
+{
+    mutable Sys.tm tm = { sec=0, min=0, hour=0, mday=0, mon=0, 
+                          year=0, wday=0, yday=0, isdst=0, gmtoff=0, zone="" };        
+    mutable uint32 n = 0u;
+    strptime(timeMillis, "%m/%d %H:%M:%S.", tm, n);
+    tm.year = (int32) year(getTimestamp());
+    tm.zone = "UTC";
+    assert(n==(uint32)(length(timeMillis)-3));
+    uint32 msecs = substring(timeMillis, (int32)n, 3);
+    timestamp ts = toTimestamp(tm);
+    return timestampToTimeMillis(ts) + (uint64) msecs;
+}
+
+stateful uint32 getRandomId()
+{
+    return randomNum(0u, 99999999u);
+}
+
+stateful uint32 randomNum(uint32 start, uint32 end)
+{
+    float64 diff = 1u+end-start;
+    return start + (uint32)(random() * diff);
+}
+
+
+public composite CommonWorkload 
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;     
+    graph
+        stream<Event.TimestampedLog> Parsed = EventGenerator() {
+            param
+                initDelay : 25.0;
+                sourceIndex : $sourceIndex;
+                sourceKind : $sourceKind;
+                workloadSize : 0u; // forever
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind); 
+                midStart : true; 
+        }
+        
+        stream<rstring event> Formatted = EventFormatter(Parsed) {}
+
+        () as Sink = TCPSink(Formatted) {
+            param
+                role : client;
+                name : "workload."+(rstring)$sourceIndex+(rstring)$sourceKind;
+                format : line;        
+        }        
+}
+
+  
+

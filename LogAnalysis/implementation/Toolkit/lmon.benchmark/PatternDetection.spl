@@ -1,0 +1,305 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+
+/* This composite operator checks order and completeness of events for each
+ * message, for a given A and B source pair. It first merges the events into
+ * timestamp order and then detects if the events are ordered as
+ * (BSent<-BRreceived<-ASent<-AReceived). If desired, it produced periodic
+ * updates that contain statistics about completeness of events.
+ * @input InA port that consumes events from a single A event source.
+ * @input InB port that consumes events from a corresponding B event source.
+ * @output Out port that produces the matched events.
+ * @output Summarized port that produces periodic updates on the number of
+ * complete and incomplete messages, number of ordered and unordered messages,
+ * number of messages that have missing events from both event sources, and the
+ * number of missing events for each event type. 
+ * @param period the period for the summary updates. if 0 (default setting), no
+ * updates are sent.
+ *
+ * Note: this composite declares a message as incomplete if it does not get a
+ * new event with 1 minutes (in timestamp time).
+ */
+public composite OrderAndCompletenessDetector(input InA, InB; output 
+    stream<uint64 messageId, boolean ordered, boolean complete> Out, 
+    stream<uint64 numComplete, uint64 numIncomplete, uint64 numOrdered, uint64 numUnordered, 
+           uint64 numIncompleteFromBothEventSources, list<uint64>[4] numMissingEvents> Summarized) 
+{
+    param
+        expression<uint32> $sourceIndex;    
+        expression<uint32> $period : 0u; // by default we do not report summaries periodically
+    graph
+        (stream<InA> LevelledA; stream<InB> LevelledB) = EventLeveler_Native(InA; InB) {
+            param
+                // Thousand tuples (note: every tuple increases timeMillis by $sourceIndex)
+                maxTimeDiff : 1000ul*(uint64)$sourceIndex; 
+        }        
+        stream<InA> Ordered = OrderMessages(LevelledA; LevelledB) {} // put messages into time order
+        stream<uint8 dummy> Beat = OptionalBeat() { 
+            param 
+                period: $period; 
+        }
+        (stream<uint64 messageId, boolean ordered, boolean complete> Out;
+         stream<uint64 numComplete, uint64 numIncomplete, uint64 numOrdered, uint64 numUnordered, 
+                uint64 numIncompleteFromBothEventSources, list<uint64>[4] numMissingEvents> Summarized) 
+        = Custom(Ordered; Beat) {
+            logic
+                state: {
+                    // time is the last time during which an update was received (used for clean up)
+                    // message mask is a bit mask of received messages (BS<-BR<-AS<-AR)
+                    // ordered tells if the message squence is ordered or not
+                    mutable map<uint64, tuple<uint64 time, uint8 mask, boolean ordered>> currentStates = {};
+                    mutable tuple<uint64 messageId, boolean ordered, boolean complete> result = {};
+                    mutable tuple<uint64 numComplete, uint64 numIncomplete, uint64 numOrdered, uint64 numUnordered, 
+                                  uint64 numIncompleteFromBothEventSources, list<uint64>[4] numMissingEvents> 
+                        summary = { numComplete = 0ul, numIncomplete = 0ul, numOrdered = 0ul, numUnordered = 0ul, 
+                                    numIncompleteFromBothEventSources = 0ul, numMissingEvents = (list<uint64>[4])[0ul, 0ul, 0ul, 0ul] };
+                    mutable uint64 currentTime = 0ul; // current time
+                }
+                onTuple Ordered: {
+                    currentTime = timeMillis;
+                    boolean ordered = checkMessageOrder(Ordered, currentStates);
+                    // if the message id is removed, we are done with this message
+                    if(!(messageId in currentStates)) { // message is removed                  
+                        result.messageId = messageId;
+                        result.complete = true;
+                        result.ordered = ordered;
+                        summary.numComplete++;
+                        if(ordered)
+                            summary.numOrdered++;
+                        else
+                            summary.numUnordered++;
+                        submit(result, Out);
+                    }  
+                }
+                onTuple Beat: {
+                    // clean up messages that have been incomplete for more than a period       
+                    result.complete = false;
+                    mutable list<uint64> toRemove = [];
+                    for(uint64 messageId in currentStates) {
+                        if(currentTime-currentStates[messageId].time > 60ul*1000ul) { // minute
+                            appendM(toRemove, messageId);
+                            result.messageId = messageId;
+                            summary.numIncomplete++;
+                            boolean ordered = currentStates[messageId].ordered;
+                            result.ordered = ordered;                        
+                            if(ordered)
+                                summary.numOrdered++;
+                            else
+                                summary.numUnordered++;          
+                            updateMissingEventCounts(summary.numMissingEvents, 
+                                                     summary.numIncompleteFromBothEventSources,
+                                                     currentStates[messageId].mask);
+                            submit(result, Out);
+                        }
+                    }    
+                    for(uint64 messageId in toRemove) 
+                        removeM(currentStates, messageId);                      
+                    submit(summary, Summarized);
+                }
+                onPunct Beat: {} // TODO: Due to a bug in the beta, this needs to be here
+                onPunct Ordered: { 
+                    // Output incomplete ones when done
+                    if(currentPunct()==Sys.FinalMarker) {
+                        result.complete = false;
+                        summary.numIncomplete += (uint64) size(currentStates);
+                        for(uint64 messageId in currentStates) {
+                            result.messageId = messageId;
+                            boolean ordered = currentStates[messageId].ordered;
+                            result.ordered = ordered;                      
+                            if(ordered)
+                                summary.numOrdered++;
+                            else
+                                summary.numUnordered++;           
+                            updateMissingEventCounts(summary.numMissingEvents, 
+                                                     summary.numIncompleteFromBothEventSources,
+                                                     currentStates[messageId].mask);
+                            submit(result, Out);
+                        }
+                        submit(summary, Summarized);
+                        clearM(currentStates);
+                    }
+                }
+        }
+}
+
+void updateMissingEventCounts(mutable list<uint64>[4] numMissingEvents, 
+    mutable uint64 numIncompleteFromBothEventSources, uint8 mask)
+{
+    if((mask & 1ub)==0ub)
+        numMissingEvents[0]++;
+    if((mask & 2ub)==0ub)
+        numMissingEvents[1]++;   
+    if((mask & 4ub)==0ub)
+        numMissingEvents[2]++;   
+    if((mask & 8ub)==0ub)
+        numMissingEvents[3]++;   
+    if((mask & 3ub)==0ub || (mask & 12ub)==0ub) 
+        numIncompleteFromBothEventSources++;
+}
+
+boolean checkMessageOrder(
+    tuple<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId> currentMessage,
+    mutable map<uint64, tuple<uint64 time, uint8 mask, boolean ordered>> currentStates)
+{
+    mutable uint8 currentMask = 0ub;
+    if(currentMessage.messageId in currentStates) {
+        currentMask = currentStates[currentMessage.messageId].mask; 
+        currentStates[currentMessage.messageId].time = currentMessage.timeMillis;
+    } else {
+        currentStates[currentMessage.messageId] = { time = currentMessage.timeMillis, 
+                                                    mask = 0ub, ordered = true };
+    }
+    uint8 currentEvent = 1ub << 
+        (2ub*((currentMessage.sourceKind==Event.A)?0ub:1ub)+
+             ((currentMessage.eventKind==Event.Msg_Rcvd)?0ub:1ub));
+    boolean localOrdered = (currentMask == currentEvent-1ub); 
+    boolean globalOrdered = currentStates[currentMessage.messageId].ordered && localOrdered;
+    currentStates[currentMessage.messageId].ordered = globalOrdered;
+    currentMask |= currentEvent; 
+    if(currentMask==15ub) // all events received
+        removeM(currentStates, currentMessage.messageId);
+    else // more events expected
+        currentStates[currentMessage.messageId].mask = currentMask;
+    return globalOrdered;
+}
+
+
+/* This composite operator merges messages from an A source and a corresponding
+ * B source, so that the resulting merger stream is in timestamp order.
+ * @input InA port that consumes events from a single A event source.
+ * @input InB port that consumes events from a corresponding B event source.
+ * @output Out port that produces the merged events.
+ */
+composite OrderMessages(input InA, InB; output Out) 
+{
+graph
+    stream<InA> Out = Custom(InA; InB) {
+        logic
+            state: {
+                mutable list<tuple<InA>> messagesA = [];
+                mutable list<tuple<InB>> messagesB = [];
+                mutable uint64 currentTime = 0ul;
+                mutable uint64 currentTimeA = 0ul;
+                mutable uint64 currentTimeB = 0ul;
+                mutable boolean doneA = false;
+                mutable boolean doneB = false;
+            }
+            onTuple InA: {
+                appendM(messagesA, InA);
+                currentTimeA = timeMillis;
+                currentTime = min(currentTimeA, currentTimeB);
+                if(currentTime>0ul) {
+                    mutable list<tuple<int8 src, int32 idx>> res = [];
+                    tuple<int32 a, int32 b> nRem = findMessagesToRemove(messagesA, messagesB, currentTime, res);
+                    for(tuple<int8 src, int32 idx> r in res) 
+                        submit((r.src==0b)?messagesA[r.idx]:messagesB[r.idx], Out);
+                    if(nRem.a>0) removeM(messagesA, 0, nRem.a-1);  
+                    if(nRem.b>0) removeM(messagesB, 0, nRem.b-1);
+                }
+            }
+            onTuple InB: {
+                appendM(messagesB, InB);
+                currentTimeB = timeMillis;
+                currentTime = min(currentTimeA, currentTimeB);
+                if(currentTime>0ul) {
+                    mutable list<tuple<int8 src, int32 idx>> res = [];
+                    tuple<int32 a, int32 b> nRem = findMessagesToRemove(messagesA, messagesB, currentTime, res);
+                    for(tuple<int8 src, int32 idx> r in res) 
+                        submit((r.src==0b)?messagesA[r.idx]:messagesB[r.idx], Out);
+                    if(nRem.a>0) removeM(messagesA, 0, nRem.a-1);  
+                    if(nRem.b>0) removeM(messagesB, 0, nRem.b-1);
+                }
+            }
+            onPunct InA : {
+                if(currentPunct()==Sys.FinalMarker) {
+                    doneA = true;
+                    if(doneB) {
+                        currentTime = max(currentTimeA, currentTimeB);
+                        mutable list<tuple<int8 src, int32 idx>> res = [];
+                        tuple<int32 a, int32 b> nRem = findMessagesToRemove(messagesA, messagesB, currentTime, res);
+                        for(tuple<int8 src, int32 idx> r in res) 
+                            submit((r.src==0b)?messagesA[r.idx]:messagesB[r.idx], Out);
+                        if(nRem.a>0) removeM(messagesA, 0, nRem.a-1);  
+                        if(nRem.b>0) removeM(messagesB, 0, nRem.b-1);                            
+                    }                            
+                }            
+            }
+            onPunct InB : {
+                if(currentPunct()==Sys.FinalMarker) {
+                    doneB = true;
+                    if(doneA) {
+                        currentTime = max(currentTimeA, currentTimeB);
+                        mutable list<tuple<int8 src, int32 idx>> res = [];
+                        tuple<int32 a, int32 b> nRem = findMessagesToRemove(messagesA, messagesB, currentTime, res);
+                        for(tuple<int8 src, int32 idx> r in res) 
+                            submit((r.src==0b)?messagesA[r.idx]:messagesB[r.idx], Out);
+                        if(nRem.a>0) removeM(messagesA, 0, nRem.a-1);  
+                        if(nRem.b>0) removeM(messagesB, 0, nRem.b-1);                            
+                    }                                                   
+                }
+            }
+    }
+}
+
+tuple<int32 a, int32 b> findMessagesToRemove(
+    list<tuple<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId>> messagesA, 
+    list<tuple<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId>> messagesB, 
+    uint64 currentTime, mutable list<tuple<int8 src, int32 idx>> res)
+{    
+    mutable int32 aIdx = 0, bIdx = 0;
+    int32 aSz = size(messagesA), bSz = size(messagesB);
+    mutable tuple<int32 a, int32 b> rem = { a = 0, b = 0 };
+    while(aIdx<aSz && bIdx<bSz) {
+        uint64 aTime = messagesA[aIdx].timeMillis;
+        uint64 bTime = messagesB[bIdx].timeMillis;
+        if(aTime > currentTime) {
+            aIdx = aSz; break;
+        }
+        if(bTime > currentTime) {
+            bIdx = bSz; break;
+        }
+        if(aTime <= bTime) {
+            appendM(res, { src = 0b, idx = aIdx });
+            rem.a++; aIdx++;
+        } else  {
+            appendM(res, { src = 1b, idx = bIdx });
+            rem.b++; bIdx++;
+        }
+    }
+    while(aIdx<aSz) {
+        uint64 aTime = messagesA[aIdx].timeMillis;
+        if(aTime > currentTime) 
+            break;
+        appendM(res, { src = 0b, idx = aIdx });
+        rem.a++; aIdx++;        
+    }
+    while(bIdx<bSz) {
+        uint64 bTime = messagesB[bIdx].timeMillis;
+        if(bTime > currentTime) 
+            break;
+        appendM(res, { src = 1b, idx = bIdx });
+        rem.b++; bIdx++;        
+    }
+    return rem;
+}
+

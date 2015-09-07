@@ -1,0 +1,82 @@
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+/* Additional includes go here */
+
+<%
+  use EventLevelerCommon;
+  EventLevelerCommon::verify($model);
+  my $maxTimeDiff = $model->getParameterByName("maxTimeDiff")
+      ->getValueAt(0)->getCppExpression();
+%>
+
+<%SPL::CodeGen::implementationPrologue($model);%>
+
+class BackoffSpinner {
+public:
+    BackoffSpinner() : count_(1) {}
+    void wait() {
+      if(count_ <= (uint32_t) loops) {
+            pause(count_);
+            count_ *= 2; 
+        } else {
+            pthread_yield();
+        }
+    }
+    static void pause(uint32_t count) {
+        for (uint32_t i=0; i< count; i++) {
+            __asm__ __volatile__("pause;");
+        }
+    }
+
+private:
+    uint32_t count_;
+    static const uint32_t loops = 16;
+};
+
+// Constructor
+MY_OPERATOR::MY_OPERATOR()
+    : port0LastTimeMillis_(0),
+      port1LastTimeMillis_(0)
+{
+    maxTimeDiff_ = <%=$maxTimeDiff%>;
+}
+
+// Tuple processing for non-mutating ports
+void MY_OPERATOR::process(Tuple const & tuple, uint32_t port)
+{ 
+    IPort0Type const & ituple = static_cast<IPort0Type const &>(tuple);
+    if(port==0) {
+        port0LastTimeMillis_ = ituple.get_timeMillis();
+        BackoffSpinner spinner;
+        while(!getPE().getShutdownRequested() &&
+              (port1LastTimeMillis_ == 0 ||
+               (port0LastTimeMillis_>port1LastTimeMillis_ &&
+                port0LastTimeMillis_-port1LastTimeMillis_ > maxTimeDiff_)))
+            spinner.wait();
+    } else {
+        port1LastTimeMillis_ = ituple.get_timeMillis();
+        BackoffSpinner spinner;
+        while(!getPE().getShutdownRequested() &&
+              (port0LastTimeMillis_ == 0 ||
+               (port1LastTimeMillis_>port0LastTimeMillis_ &&
+                port1LastTimeMillis_-port0LastTimeMillis_ > maxTimeDiff_)))
+            spinner.wait();
+    }
+    submit(tuple, port);
+}
+
+// Punctuation processing
+void MY_OPERATOR::process(Punctuation const & punct, uint32_t port)
+{
+    if(punct==Punctuation::WindowMarker) 
+        submit(punct, port);
+}
+
+<%SPL::CodeGen::implementationEpilogue($model);%>
+

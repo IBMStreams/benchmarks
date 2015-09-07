@@ -1,0 +1,87 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#
+# Licensed Materials - Property of IBM
+# Copyright IBM Corp. 2011
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with
+# IBM Corp.
+#
+
+# This script lists the PE info, including info about the CPU processes where it runs.
+# One file is generated per PE ID, and are saved in <Parent Dir. of *.source-stats>/PEs
+
+# For some phenonmenon I haven't figured out completely,
+# sourcing the streamsprofile here won't work if you pass
+# in arguments (to this script) unless you add a flag like
+# the -s flag
+source ${STREAMS_INSTALL}/bin/streamsprofile.sh -s
+
+MON_FILE_TEMPLATE=$1
+EXT=$(basename $MON_FILE_TEMPLATE)
+MON_DIR=$(dirname $MON_FILE_TEMPLATE)
+
+PESTATS_DURATIONDEFAULT=90
+PESTATS_DURATION=${PESTATS_DURATION:-$PESTATS_DURATIONDEFAULT}
+
+PESTATS_INTERVALDEFAULT=90
+PESTATS_INTERVAL=${PESTATS_INTERVAL:-$PESTATS_INTERVALDEFAULT}
+
+# time interval after which the PE info is listed.
+INTERVAL=60
+
+#output directory where the PE stats will be saved.
+OUTDIR=$MON_DIR/PEs
+mkdir -p $OUTDIR
+
+# remove the old files 
+rm -rf $OUTDIR/PE.*
+
+streamtool lspes -i $INSTANCE | \
+while read input; do \
+    pe_id=`echo $input | gawk '{print $1}'`
+    if [[ "x$pe_id" == "x"*[0-9]* ]]; then
+	echo Id State RC Healthy Host PID JobId JobName Operators > $OUTDIR/PE.$pe_id.$EXT
+    fi
+done
+
+count=0
+
+#while [ $count -lt 3 ]
+#while true
+for ((z=0; z <= $PESTATS_DURATION; z=$z+$PESTATS_INTERVAL))
+do
+    streamtool lspes -i $INSTANCE | \
+    while read input; do \
+	pe_id=`echo $input | gawk '{print $1}'`
+	if [[ "x$pe_id" == "x"*[0-9]* ]]; then
+	    echo $input >> $OUTDIR/PE.$pe_id.$EXT
+	fi
+
+	pe_pid=`echo $input | gawk '{print $6}'`
+        # pe_pid can be 0 if PE is not yet running
+        if [[ "x$pe_pid" != "x0" ]] ; then
+	  if [[ "x$pe_pid" == "x"*[0-9]* ]]; then
+	      ps -p $pe_pid -L -o pid,tid,nlwp,lwp,psr,comm >> $OUTDIR/PE.$pe_id.$EXT
+	  fi
+        fi
+	
+	if [[ "x$pe_id" == "x"*[0-9]* ]]; then
+	    echo "" >> $OUTDIR/PE.$pe_id.$EXT
+	fi
+    done
+
+    sleep $PESTATS_INTERVAL
+done

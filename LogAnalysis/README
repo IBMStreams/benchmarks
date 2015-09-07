@@ -1,0 +1,11 @@
+Do the following to run the workload.
+cd implemenation/Scripts
+edit the hostname into 'hosts' file
+cp config.sh.template config.sh
+Edit config.sh - these are only the most critical fields.
+STREAMS_ZKCONNECT - provide a valid Zookeeper connection string
+TESTDRIVER - select autorunPerf for a benchmark run
+TESTS - select the test variations desired
+MIN_NUMSOURCES, MAX_NUMSOURCES - test variations will start running with MIN_NUMSOURCES data sources.  At MAX_NUMSOURCES, The exit criterion will be applied; i.e., one 4 consucutive test points are measured without seeing a new maximum, the test for that variation will be considered comple.  Most of the test variationswill reach the maximum throughput with a number of data sources slightly less than the number of CPUs on the system.  So for an x86 machine with 14 cores and HT2, that is 28 CPUs, and a max value of 16-20 is probably about right.  For a Power system with 16 cores and SMT4, that is 64 CPUs, at 52-56 will be better.  The PTD variations generally require more data sources (~2x CPUs) to reach the max point,  
+RESULTS - results will be place in this directory.  After the test is completed, summary results will be placed in .csv files in subdirectory Perf/Results.
+At the end of the test the cleanup.sh script may be used to remove all generated files ands clean up the instance and domain created by run.sh.

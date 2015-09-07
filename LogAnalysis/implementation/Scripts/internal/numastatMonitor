@@ -1,0 +1,49 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#
+# Licensed Materials - Property of IBM
+# Copyright IBM Corp. 2011
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with
+# IBM Corp.
+#
+
+MON_FILE_TEMPLATE=$1
+EXT=$(basename $MON_FILE_TEMPLATE)
+MON_DIR=$(dirname $MON_FILE_TEMPLATE)
+
+NUMASTAT_MONITOR_DURATIONDEFAULT=90
+NUMASTAT_MONITOR_DURATION=${NUMASTAT_MONITOR_DURATION:-$NUMASTAT_MONITOR_DURATIONDEFAULT}
+
+NUMASTAT_MONITOR_INTERVALDEFAULT=30
+NUMASTAT_MONITOR_INTERVAL=${NUMASTAT_MONITOR_INTERVAL:-$NUMASTAT_MONITOR_INTERVALDEFAULT}
+
+NUMASTAT_MONITOR_PROCESSNAMEDEFAULT="streams-pec"
+NUMASTAT_MONITOR_PROCESSNAME=${NUMASTAT_MONITOR_PROCESSNAME:-$NUMASTAT_MONITOR_PROCESSNAMEDEFAULT}
+
+if [ "" == "$NUMASTAT_MONITOR_PROCESSNAME" ] ; then
+  PROCESSPARM=
+else
+  PROCESSPARM="-p $NUMASTAT_MONITOR_PROCESSNAME"
+fi
+
+FILE=$MON_DIR/numastatMonitor.$(hostname).$EXT
+rm -rf $FILE
+
+for ((z=0; z <= $NUMASTAT_MONITOR_DURATION; z=$z+$NUMASTAT_MONITOR_INTERVAL))
+do    
+  numastat $PROCESSPARM >> $FILE 2>&1
+  sleep $NUMASTAT_MONITOR_INTERVAL
+done

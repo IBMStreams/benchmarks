@@ -1,0 +1,118 @@
+#!/bin/bash
+COUNTER_SET="PM_RUN_CYC"
+COUNTER_SET=$COUNTER_SET",PM_RUN_INST_CMPL"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_L2"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_L3"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_LL4"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_RL4"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_DL4"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_MEM"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_LMEM"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_RMEM"
+COUNTER_SET=$COUNTER_SET",PM_DATA_FROM_DMEM"
+COUNTER_SET=$COUNTER_SET",PM_L1MISS_LAT_EXC_32"
+COUNTER_SET=$COUNTER_SET",PM_L1MISS_LAT_EXC_256"
+COUNTER_SET=$COUNTER_SET",PM_L1MISS_LAT_EXC_1024"
+COUNTER_SET=$COUNTER_SET",PM_L1MISS_LAT_EXC_2048"
+COUNTER_SET=$COUNTER_SET",PM_RC_LIFETIME_EXC_32"
+COUNTER_SET=$COUNTER_SET",PM_RC_LIFETIME_EXC_256"
+COUNTER_SET=$COUNTER_SET",PM_RC_LIFETIME_EXC_1024"
+COUNTER_SET=$COUNTER_SET",PM_RC_LIFETIME_EXC_2048"
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <options>"
+    echo ""
+    echo " -A: Aggregate data from all CPUs"
+    echo " -C <comma separated list of CPUs to measure>"
+    echo "    mutually exclusive with -p"
+    echo " -c <comma separated list of event counters>"
+    echo "    use 'ophelp' to generate the list"
+    echo " -i <interval in milliseconds>"
+    echo "    defaults to one measurement"
+    echo " -o <output directory>"
+    echo "    defaults to /tmp"
+    echo " -p <process id>"
+    echo "    mutually exclusive with -C"
+    echo " -s <stop file (testing stops when this file is deleted)>"
+    echo " -t <time in seconds to test>"
+    echo "    defaults to 300"
+    echo ""
+    exit 1
+}
+TIME=300
+OUT_DIR="/tmp"
+PREFIX="pmu"
+PROCESS_ID=0
+INTERVAL=0
+SEPARATE_CPU="-c"
+STOP_FILE=""
+CPU_LIST=""
+while getopts AC:c:Hhi:o:p:s:t: OPT; do
+	case ${OPT} in
+		A) SEPARATE_CPU="" ;;
+		C) if [ $PROCESS_ID != 0 ] ; then
+			echo "-C and -p are mutually exclusive"
+		   fi
+		   CPU_LIST=" -C "${OPTARG}" " ;;
+		c) COUNTER_SET=${OPTARG} ;;
+		H) usage ;;
+		h) usage ;;
+		i) INTERVAL=${OPTARG} ;;
+		o) OUT_DIR=${OPTARG} ;;
+		p) if [ -n $CPU_LIST ] ; then
+			echo "-C and -p are mutually exclusive"
+		   fi
+		   PROCESS_ID=${OPTARG} ;;
+		s) STOP_FILE=${OPTARG} ;;
+		t) TIME=${OPTARG} ;;
+		\?) echo "Invalid option: -$OPTARG";
+		    usage ;;
+	esac
+done
+DATE_STRING=`date +%Y%m%d%H%M%S`
+COUNTER_SESSION=$PREFIX"_counts"
+COUNTER_RAW_DATA=$OUT_DIR"/"$COUNTER_SESSION
+COUNTER_FILE=$COUNTER_RAW_DATA".csv"
+#exit 1
+#mkdir $COUNTER_RAW_DATA
+COUNTER_CMD="/usr/local/bin/ocount -b -e "$COUNTER_SET
+if [ $PROCESS_ID != 0 ] ; then
+	AWK_CMD="awk BEGIN{comma=\"\"}/^"$PROCESS_ID"/{printf(\"%s%s\",comma,\$2);comma=\",\"}"
+	echo $AWK_CMD
+	THREADS=`ps -eLo pid,tid | $AWK_CMD`
+	echo $THREADS
+	if [ "$THREADS" = "" ] ; then
+		echo "Invalid process id - no threads found"
+		exit
+	fi
+	COUNTER_CMD=$COUNTER_CMD" -t -r "$THREADS
+	echo $COUNTER_CMD
+elif [ -n "$CPU_LIST" ] ; then
+	COUNTER_CMD=$COUNTER_CMD" "$SEPARATE_CPU" "$CPU_LIST
+else
+	COUNTER_CMD=$COUNTER_CMD" "$SEPARATE_CPU" -s"
+fi
+if [ $INTERVAL != 0 ] ; then
+	COUNTER_CMD=$COUNTER_CMD" -i "$INTERVAL
+fi
+COUNTER_CMD=$COUNTER_CMD" -f "$COUNTER_FILE
+echo $COUNTER_CMD
+echo "Starting ocount "`date`
+if [ -n "$STOP_FILE" ] ; then
+    touch $STOP_FILE
+    echo "rm $STOP_FILE to stop"
+fi
+$COUNTER_CMD &
+COUNTER_PID=$!
+ITER=0
+echo "Process ID: "$COUNTER_PID
+while [[ ( "$TIME" -le 0  ||  "$ITER" -le "$TIME"  ) && (  -z "$STOP_FILE"  ||  -e $STOP_FILE ) ]] ; do
+    ITER=$((ITER+1))
+    sleep 1 
+done
+echo "Killing ocount "`date`
+kill -SIGINT $COUNTER_PID
+wait $COUNTER_PID
+echo "ocount process gone "`date`
+echo "Done running "`date`

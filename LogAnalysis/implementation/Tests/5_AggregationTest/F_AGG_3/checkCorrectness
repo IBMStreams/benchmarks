@@ -1,0 +1,24 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+DATA_DIR=$(dirname $0)/data
+BASE_DATA_DIR=$DATA_DIR/../../../../Data/DataFiles
+
+function checkFile
+{
+    ofile=$DATA_DIR/B.summary
+    diff $ofile <(echo "{count=4000000}") || exit 1    
+}
+
+# Check the file
+checkFile
+if [ $? -ne 0 ]; then
+    exit 1;
+fi

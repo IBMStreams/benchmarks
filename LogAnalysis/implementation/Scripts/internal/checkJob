@@ -1,0 +1,40 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                                                                                                 
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# Compute performance stats for the current run - average rate, cpu utilization and memory utilization
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name "
+    echo ""
+    echo ""
+    echo "Log job health"
+}
+
+if [[ $# -ne 0 ]]; then
+    usage;
+    exit 1;
+fi
+
+DIR=$(dirname $0)
+LMON_INSTANCE=${INSTANCE:-LMON_Benchmark}
+streamtool lsjob -i $LMON_INSTANCE | while read line ; do $DIR/logMsg "$line" ; done

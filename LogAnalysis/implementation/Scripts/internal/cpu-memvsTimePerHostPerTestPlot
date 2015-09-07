@@ -1,0 +1,260 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# This script generates an output graph per test per host, 
+# plotting cpu utilization against time of that host. 
+# It also generates an output graph per test plotting 
+# average cpu utilization across all hosts against time.
+#
+# This script also generates an output graph per test per host,
+# plotting memory utilization against time of that host.
+# It also generates an output graph per test plotting
+# average memory utilization across all hosts against time.
+#
+# There may be multiple line plots in an output graph
+# of each corresponding test, where one line plot 
+# corresponds to the test run for a specific # of event sources
+# 
+# NOTE: TO GET CONSISTENT RESULT, ALL TEST RUNS FOR WHICH GRAPHS NEED TO BE GENERATED SHOULD HAVE THE SAME SET OF HOSTS
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <test-name> <num-nodes> <num-cpus> <data-dir>"
+    echo ""
+    echo "  - <test-name> : Name of the test for which graphs are to be generated."
+    echo "    'ALL' for all the tests. Specific names eg P_BAS_1 for a specific test "
+    echo "  - <num-nodes> : Number of nodes to use."
+    echo "  - <num-cpus> : No. of CPUs to use on each node."
+    echo "      Value '-1' implies all cores will be used"
+    echo "  - <data-dir> : Root directory under which raw data of all tests is stored"
+    echo "     e.g <current_dir>/../../Results/Perf is a default location"
+    echo "     Graphs will be generated under the same root directory"
+    echo "     By default, the graphs will be generated in"
+    echo "     <current_dir>/../../Results/Perf/Graphs"
+    echo ""
+    echo "Generate one graph plotting the cpu utilization vs time per test per host"
+    echo "Generate a graph plotting cpu utilization vs time, averaged over all hosts"  
+    echo "Generate one graph plotting the memory utilization vs time per test per host"
+    echo "Generate a graph plotting memory utilization vs time, averaged over all hosts"
+    echo "Sample usage:"
+    echo "    $name ALL 1 -1 ../../Results/Perf"
+}
+
+if [[ $# -ne 4 ]]; then
+    usage;
+    exit 1;
+fi
+
+DIR=$(dirname $0)
+
+# It is either an array of all tests or a single test
+TESTS=$1
+if [[ "x$TESTS" == "xALL" ]]; then
+    TESTS=('P_BAS_1' 'P_FLT_1' 'P_FLT_2' 'P_ENR_1' 'P_ENR_2' 'P_PRJ_1' 'P_AGG_1' 'P_AGG_2' 'P_AGG_3' 'P_AGG_4' 'P_STM_1' 'P_STM_2' 'P_SPT_1' 'P_COR_1' 'P_COR_2' 'P_COR_3' 'P_PTD_1' 'P_PTD_2' 'P_PTD_3' 'P_PTD_4')
+fi
+
+# no. of nodes
+NUM_NODES=$2
+
+# no. of CPUs. Value '-1' implies all the available cores of all nodes will be used
+NUM_CPUS=$3
+
+# Common root directory for the subdirectories where raw data from corr. tests are stored
+DATA_DIR=$(readlink -f $4)
+
+# The directory location of the graphs to be generated. Create one if not already exists
+GRAPH_DIR="$DATA_DIR/Graphs/cpu-mem_vs_time"
+mkdir -p $GRAPH_DIR
+
+for test in "${TESTS[@]}"
+do
+
+    ls -d $DATA_DIR/$test >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "Cannot find $DATA_DIR/$test directory">/dev/stderr
+        continue
+    fi
+
+    # Create the directory if already not exists
+    mkdir -p $GRAPH_DIR/$test
+
+    # Remove the old data
+    rm -rf $GRAPH_DIR/$test
+
+    # Maintain the maximum memory utilization across all hosts
+    # Used to set the upper limit of Y-axis for all the graphs
+    maxMem=0
+
+    # Maintain the maximum memory utilization across all hosts
+    # Used to set the upper limit of Y-axis for all the graphs
+    minMem=0
+    flag=0
+
+    # Array of # of data sources for which the test runs
+    ls -d $DATA_DIR/$test/perf.* >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "Cannot find perf data for '$test'">/dev/stderr
+	continue
+    fi
+    sourceArr=(`ls -ld $DATA_DIR/$test/perf.* | gawk -F/ '{print $NF}' | gawk -F. '{print $2}' | sort -n`)
+
+    for sources in "${sourceArr[@]}"
+    do
+	perfDir=$DATA_DIR/$test/perf.$sources
+	if  [[ ! -d $perfDir ]]; then
+	    echo "Error! $perfDir does not exist. Exiting.. "
+	    exit 1
+	fi
+	sources=`echo $(basename $perfDir) | cut -f 2 -d "."`
+
+	# generate the data files for average cpu and memory utilization across all nodes
+	file=$perfDir/cpu-mem.$NUM_NODES.$NUM_CPUS
+	if [[ ! -e $file ]]; then
+	    echo "Warning! file $file could not be found"
+	else
+	    mkdir -p $GRAPH_DIR/$test/avg
+	    cp $file $GRAPH_DIR/$test/avg/cpu-mem.$NUM_NODES.${NUM_CPUS}_${sources}src.dat
+	fi
+
+	# generate the data files for cpu and memory utilization for each node individually
+	hosts=(`ls $perfDir/cpu-mem.*.1.-1 | awk -F "/" '{print $NF}' | cut -d '.' -f2- | rev | cut -d '.' -f3- | rev`)
+	for host in "${hosts[@]}"
+	do
+            file=$perfDir/cpu-mem.$host.$NUM_NODES.$NUM_CPUS
+            if [[ ! -e $file ]]; then
+		echo Warning! file $file was not generated for $sources sources of test $test
+	    else
+		mkdir -p $GRAPH_DIR/$test/$host
+		cp $file $GRAPH_DIR/$test/$host/cpu-mem.$host.$NUM_NODES.${NUM_CPUS}_${sources}src.dat
+
+		mem=`cat $perfDir/cpu-mem.$host.1.-1 | gawk '{print $2}' | sort | tail -1`
+		if [[ $maxMem -lt $mem ]]; then
+		    maxMem=$mem
+		fi
+		if [[ "x$flag" == "x0" ]]; then
+		    minMem=$mem
+		    flag=1
+		else
+		    if [[ $minMem -gt $mem ]]; then
+			minMem=$mem
+		    fi
+		fi
+            fi
+
+	done
+    done
+
+# Generate graph for average cpu utilization across all hosts
+/usr/bin/gnuplot <<EOF
+reset
+set terminal postscript eps enhanced color font "helvetica,15"
+set output "`echo $GRAPH_DIR/$test/avg/`cpuvsTime.eps"
+set xlabel 'Time (seconds)'
+set xtics font "Times-Roman, 20"
+set ylabel 'CPU (% Utilization)'
+set yrange [0:105]
+set ytics font "Times-Roman, 20"
+num=${#sourceArr[@]}
+values="${sourceArr[*]}"
+file(n)=sprintf("$GRAPH_DIR/$test/avg/cpu-mem.$NUM_NODES.${NUM_CPUS}_%ssrc.dat",word(values,n))
+tit(n)=sprintf("%s src",word(values,n))
+plot for [i=1:num] file(i) using 1:3 title tit(i) with lp lw 4
+EOF
+
+if [[ -e $GRAPH_DIR/$test/avg/cpuvsTime.eps ]]; then
+    ps2pdfwr $GRAPH_DIR/$test/avg/cpuvsTime.eps $GRAPH_DIR/$test/avg/cpuvsTime.pdf
+fi
+
+# Generate graph for average memory utilization across all hosts
+/usr/bin/gnuplot <<EOF
+reset
+set terminal postscript eps enhanced color font "helvetica,15"
+set output "`echo $GRAPH_DIR/$test/avg/`memvsTime.eps"
+set xlabel 'Time (seconds)'
+set xtics font "Times-Roman, 20"
+set ylabel 'Memory Utilization (MB)'
+yl=$minMem-(0.1*$maxMem)
+yu=$maxMem+(0.1*$maxMem)
+set yrange [0:yu]
+set ytics font "Times-Roman, 20"
+num=${#sourceArr[@]}
+values="${sourceArr[*]}"
+file(n)=sprintf("$GRAPH_DIR/$test/avg/cpu-mem.$NUM_NODES.${NUM_CPUS}_%ssrc.dat",word(values,n))
+tit(n)=sprintf("%s src",word(values,n))
+plot for [i=1:num] file(i) using 1:2 title tit(i) with lp lw 4
+EOF
+
+if [[ -e $GRAPH_DIR/$test/avg/memvsTime.eps ]]; then
+    ps2pdfwr $GRAPH_DIR/$test/avg/memvsTime.eps $GRAPH_DIR/$test/avg/memvsTime.pdf
+fi
+
+
+# Generate graph for cpu and memory utilization for each hosts  
+for host in "${hosts[@]}"
+do
+
+/usr/bin/gnuplot <<EOF
+reset
+set terminal postscript eps enhanced color font "helvetica,15"
+set output "`echo $GRAPH_DIR/$test/$host/`cpuvsTime`echo $host`.eps
+set xlabel 'Time (seconds)'
+set xtics font "Times-Roman, 20"
+set ylabel 'CPU (% Utilization)'
+set yrange [0:105]
+set ytics font "Times-Roman, 20"
+num=${#sourceArr[@]}
+values="${sourceArr[*]}"
+file(n)=sprintf("$GRAPH_DIR/$test/$host/cpu-mem.$host.$NUM_NODES.${NUM_CPUS}_%ssrc.dat",word(values,n))
+tit(n)=sprintf("%s Sources",word(values,n))
+plot for [i=1:num] file(i) using 1:3 title tit(i) with lp lw 4
+EOF
+
+    if [[ -e $GRAPH_DIR/$test/$host/cpuvsTime$host.eps ]]; then
+       ps2pdfwr $GRAPH_DIR/$test/$host/cpuvsTime$host.eps $GRAPH_DIR/$test/$host/cpuvsTime$host.pdf
+    fi
+
+/usr/bin/gnuplot <<EOF
+reset
+set terminal postscript eps enhanced color font "helvetica,15"
+set output "`echo $GRAPH_DIR/$test/$host/`memvsTime`echo $host`.eps
+set xlabel 'Time (seconds)'
+set xtics font "Times-Roman, 20"
+set ylabel 'Memory Utilization (MB)'
+yl=$minMem-(0.1*$maxMem)
+yu=$maxMem+(0.1*$maxMem)
+set yrange [0:yu]
+set ytics font "Times-Roman, 20"
+num=${#sourceArr[@]}
+values="${sourceArr[*]}"
+file(n)=sprintf("$GRAPH_DIR/$test/$host/cpu-mem.$host.$NUM_NODES.${NUM_CPUS}_%ssrc.dat",word(values,n))
+tit(n)=sprintf("%s Sources",word(values,n))
+plot for [i=1:num] file(i) using 1:2 title tit(i) with lp lw 4
+EOF
+
+    if [[ -e $GRAPH_DIR/$test/$host/memvsTime$host.eps ]]; then
+       ps2pdfwr $GRAPH_DIR/$test/$host/memvsTime$host.eps $GRAPH_DIR/$test/$host/memvsTime$host.pdf
+    fi
+
+done
+
+done

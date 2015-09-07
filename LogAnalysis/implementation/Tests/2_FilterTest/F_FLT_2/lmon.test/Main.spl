@@ -1,0 +1,83 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+composite OneChain
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Beat = FileSource() {
+            param
+                file : getSubmissionTimeValue("dataDir", "../../../../Data") + "/DataFiles/" +
+                       (rstring) $sourceKind + (rstring) $sourceIndex + "/input-data";
+                format : line;
+                parsing : fast;            
+        }
+
+        stream<Event.Log> Parsed = EventParser(Beat) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind); 
+        }
+
+        stream<Event.Log> Filtered = Filter(Parsed) {
+            logic
+                state: {
+                    mutable uint8 count = 0ub;
+                    mutable boolean tenth = false;
+                }
+                onTuple Parsed: {
+                    if(eventKind == Event.Msg_Sent) {
+                        tenth = false;
+                        count++;
+                        if(count==10ub) {
+                            tenth = true;
+                            count = 0ub;
+                        }
+                    } 
+                  
+                }
+            param
+               filter: (eventKind == Event.Msg_Sent) && tenth;
+        }
+
+        () as Sink = EventFormatter_Native(Filtered) {
+            param
+                file : (rstring) $sourceKind + (rstring) $sourceIndex + ".output-data";
+        }
+}
+
+composite Main 
+{
+  graph
+      () as Sink = CommonMain() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                core : lmon.test::OneChain; 
+      }
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared); 
+}
+

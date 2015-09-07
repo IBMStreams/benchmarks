@@ -1,0 +1,76 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+
+DIR=$(dirname $0)
+MON_FILE_TEMPLATE=$1
+STOPFILE=$2
+ls -d $DATA_DIR >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+    mkdir -p $DATA_DIR
+fi
+
+COLLECTION_SETTLE_TIMEDEFAULT=30
+COLLECTION_SETTLE_TIME=${COLLECTION_SETTLE_TIME:-$COLLECTION_SETTLE_TIMEDEFAULT}
+
+
+PROFILEPERF_SCRIPT=$(readlink -f $DIR)/profile_perf
+PROFILEOPERF_SCRIPT=$(readlink -f $DIR)/profile_operf
+PESTAT_SCRIPT=$(readlink -f $DIR)/pestats
+PERFSCHEDULER_SCRIPT=$(readlink -f $DIR)/perfScheduler
+NUMASTAT_MONITOR_SCRIPT=$(readlink -f $DIR)/numastatMonitor
+
+HOST=$(hostname -s)
+
+
+# perf profile
+if [ "x$DO_PERFPROFILE" == "x1" ] ; then 
+  sleep $COLLECTION_SETTLE_TIME
+  echo "Starting perf profiling on $HOST"
+  $PROFILEPERF_SCRIPT $MON_FILE_TEMPLATE 
+  echo "Finished perf profiling on $HOST"
+fi
+
+# operf profile
+if [ "x$DO_OPERFPROFILE" == "x1" ] ; then 
+  sleep $COLLECTION_SETTLE_TIME
+  echo "Starting operf profiling on $HOST"
+  $PROFILEOPERF_SCRIPT $MON_FILE_TEMPLATE
+  echo "Finished operf profiling on $HOST"
+fi
+
+# perf scheduler
+if [ "x$DO_PERFSCHEDULER" == "x1" ] ; then 
+  sleep $COLLECTION_SETTLE_TIME
+  echo "Starting perf scheduler on $HOST"
+  $PERFSCHEDULER_SCRIPT $MON_FILE_TEMPLATE
+  echo "Finished perf scheduler on $HOST"
+fi
+
+# PE stats
+if [ "x$DO_PESTATS" == "x1" ] ; then 
+  sleep $COLLECTION_SETTLE_TIME
+  echo "Starting PE stats on $HOST"
+  $PESTAT_SCRIPT $MON_FILE_TEMPLATE
+  echo "Finished PE stats on $HOST"
+fi
+
+# numastat monitor
+if [ "x$DO_NUMASTAT_MONITOR" == "x1" ] ; then 
+  sleep $COLLECTION_SETTLE_TIME
+  echo "Starting numastat monitor on $HOST"
+  $NUMASTAT_MONITOR_SCRIPT $MON_FILE_TEMPLATE
+  echo "Finished numastat monitor on $HOST"
+fi
+
+
+# Let the monitoring script know that we have finished
+rm $STOPFILE
+

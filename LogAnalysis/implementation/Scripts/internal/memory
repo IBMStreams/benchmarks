@@ -1,0 +1,54 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+MON_FILE_TEMPLATE=$1
+EXT=$(basename $MON_FILE_TEMPLATE)
+DIR=$(dirname $MON_FILE_TEMPLATE)
+FILE=$DIR/monitoring.$(hostname).$EXT
+
+TEST_INTERVAL=$2
+
+function getmem
+{
+    # Setting COLUMNS helps width problems when getting to RHEL7
+    export COLUMNS=200
+    #MBA 3/18/2009 - sometimes when we get to certain threshold
+    #   top, will report memory with a "g".  i.e.  "1.5g"
+    #   Thus need to handle decimal values with "bc"
+    top -b -n 1 -u $USER | grep streams-pec | gawk '{print $6;}' | \
+      sed 's/m/\*1024/' | sed 's/g/\*1024\*1024\/1/' | \
+        bc  | while read expr; do echo "$((expr))"; done | \
+        gawk '{ SUM = SUM + $1} END { print SUM }'
+
+}
+
+EXEC_DIR=$(dirname $0)
+$EXEC_DIR/../utilities/alignTimeToInterval $TEST_INTERVAL
+
+#sleep $TEST_INTERVAL
+vmstat -S M -n $TEST_INTERVAL |  \
+    while read input; do  \
+    date +%s | tr '\n' ' ' >> $FILE; \
+    echo $input | tr '\n' ' ' >> $FILE; \
+    getmem | tr '\n' ' '>> $FILE; \
+    echo "" >> $FILE; \
+done

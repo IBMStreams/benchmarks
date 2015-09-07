@@ -1,0 +1,88 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+composite OneChain(output stream<uint64 count, uint32 index> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Beat = FileSource() {
+            param
+                file : getSubmissionTimeValue("dataDir", "../../../../Data") + "/DataFiles/" +
+                       (rstring) $sourceKind + (rstring) $sourceIndex + "/input-data";
+                format : line;
+                parsing : fast;            
+        }
+
+        stream<Event.Log> Parsed = EventParser(Beat) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind); 
+        }
+
+        // Counts for each source
+        stream<uint64 count, uint32 index> Out = RunningEventCounter(Parsed) {
+            param
+               sourceIndex :  $sourceIndex;
+               period :  1000ul; // every thousand tuples
+        }
+}
+
+composite OnePool(input stream<uint64 count, uint32 index> In)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;    
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndexStart;    
+        expression<uint32> $sourceIndexEnd;    
+    graph
+        // Merges the counts for the pools
+        stream<uint64 count> Merged = RunningEventCountMerger(In) {}        
+
+        () as Sink = FileSink(Merged) {
+            param
+                file : "P" + (rstring)$poolIndex + ".summary";
+                format : txt;
+        }
+       
+}
+
+composite Main 
+{
+  graph
+      () as Sink1 = CommonMainWithPools() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                chainCore : lmon.test::OneChain; 
+                poolACore : lmon.test::OnePool;
+                poolBCore : lmon.test::OnePool;
+                chainOutputType: tuple<uint64 count, uint32 index>;
+      }
+
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared); 
+}
+

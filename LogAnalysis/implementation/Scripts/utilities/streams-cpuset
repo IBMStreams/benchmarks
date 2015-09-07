@@ -1,0 +1,5 @@
+#!/bin/bash
+for hcProcess in `ps -eo pid,tid,comm,ruser | awk '/streams-hc/{print $1}'`; do
+    echo setting affinity for $hcProcess at `date`
+    echo $hcProcess > /dev/cpuset/LA/cgroup.procs
+done

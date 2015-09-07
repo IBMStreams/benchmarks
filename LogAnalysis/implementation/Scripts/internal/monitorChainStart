@@ -1,0 +1,130 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <data-dir> <interval> <num-nodes> <num-cpus>"
+    echo ""
+    echo "  - <data-dir> : Directory to store monitoring data eg. memory util."
+    echo "  - <interval> : Monitoring interval (seconds)."
+    echo "  - <num-nodes> : Numbers of nodes."
+    echo "  - <num-cpus> : Numbers of cpus."
+    echo ""
+    echo "Monitor all the hosts at the specified interval using vmstat. Sample usage:"
+    echo "    $name ../../Results/P_BAS_1/ 2 4 4"
+}
+
+if [[ $# -ne 4 ]]; then
+    usage;
+    exit 1;
+fi
+
+DIR=$(dirname $0)
+DATA_DIR=$1
+TEST_INTERVAL=$2
+ls -d $DATA_DIR >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+    mkdir -p $DATA_DIR
+fi
+
+NUM_NODES=$3
+NUM_CPUS=$4
+
+# Create perf directory if one does not exist
+mkdir -p $DATA_DIR
+
+
+MON_FILE_TEMPLATE=$DATA_DIR/$NUM_NODES.$NUM_CPUS 
+MON_FILE_TEMPLATE=$(readlink -f $MON_FILE_TEMPLATE)
+MONITORCHAIN_SCRIPT=$(readlink -f $DIR)/monitorChainOnHost
+PROFILEPERF_VARS="DO_PERFPROFILE=$DO_PERFPROFILE \
+                  PERFPROFILE_USE_SUDO=$PERFPROFILE_USE_SUDO \
+                  PERFPROFILE_DURATION=$PERFPROFILE_DURATION \
+                  PERFPROFILE_ADDITIONAL_FLAGS=$PERFPROFILE_ADDITIONAL_FLAGS"
+PROFILEOPERF_VARS="DO_OPERFPROFILE=$DO_OPERFPROFILE \
+                   OPERFPROFILE_USE_SUDO=$OPERFPROFILE_USE_SUDO \
+                   OPERFPROFILE_LOCATION=$OPERFPROFILE_LOCATION \
+                   OPERFPROFILE_DURATION=$OPERFPROFILE_DURATION \
+                   OPERFPROFILE_SAMPLEPERIOD=$OPERFPROFILE_SAMPLEPERIOD \
+                   OPERFPROFILE_COUNTERSPEC=$OPERFPROFILE_COUNTERSPEC \
+                   OPERFPROFILE_VMLINUX=$OPERFPROFILE_VMLINUX \
+                   OPERFPROFILE_ADDITIONAL_FLAGS=$OPERFPROFILE_ADDITIONAL_FLAGS \
+                   OPERFPROFILE_DEBUG=$OPERFPROFILE_DEBUG "
+PESTAT_VARS="DO_PESTATS=$DO_PESTATS \
+             PESTATS_DURATION=$PESTATS_DURATION \
+             PESTATS_INTERVAL=$PESTATS_INTERVAL \
+             STREAMS_INSTALL=$STREAMS_INSTALL \
+             INSTANCE=$INSTANCE"
+PERFSCHEDULER_VARS="DO_PERFSCHEDULER=$DO_PERFSCHEDULER \
+                  PERFSCHEDULER_DURATION=$PERFSCHEDULER_DURATION \
+                  PERFSCHEDULER_ADDITIONAL_FLAGS=$PERFSCHEDULER_ADDITIONAL_FLAGS"
+NUMASTAT_MONITOR_VARS="DO_NUMASTAT_MONITOR=$DO_NUMASTAT_MONITOR \
+                  NUMASTAT_MONITOR_DURATION=$NUMASTAT_MONITOR_DURATION \
+                  NUMASTAT_MONITOR_INTERVAL=$NUMASTAT_MONITOR_INTERVAL \
+                  NUMASTAT_MONITOR_PROCESSNAME=$NUMASTAT_MONITOR_PROCESSNAME"
+
+
+EXTRA_VARS="COLLECTION_SETTLE_TIME=$COLLECTION_SETTLE_TIME \
+	LOG_FILE=$LOG_FILE"
+
+ALL_VARS="$PROFILEPERF_VARS \
+          $PROFILEOPERF_VARS \
+          $PESTAT_VARS \
+          $PERFSCHEDULER_VARS \
+          $NUMASTAT_MONITOR_VARS \
+          $EXTRA_VARS "
+
+# ssh and run monitorChainOnHost
+STOPFILEBASE=${DATA_DIR}/stopFileChain
+hosts=$(cat $DIR/../hosts | grep analytic | cut -f 1 -d " ")
+for host in $hosts; do
+    STOPFILE=${STOPFILEBASE}.$host
+    touch $STOPFILE
+    ssh -qx $host $ALL_VARS $MONITORCHAIN_SCRIPT $MON_FILE_TEMPLATE $STOPFILE &
+done
+
+# Now wait for all the stop files to disappear
+POLLINTERVAL=10
+GOODTOGO=0
+while [ $GOODTOGO -eq 0 ] ; do
+  GOODTOGO=1
+  #echo "Checking status of monitoring chains"
+  for host in $hosts; do
+    STOPFILE=${STOPFILEBASE}.$host
+    if [ -f "$STOPFILE" ] ; then
+      GOODTOGO=0
+    #  echo "Monitoring chain on $host is not finished." 
+    #else
+    #  echo "Monitoring chain on $host is finished." 
+    fi
+  done
+  if [ $GOODTOGO -eq 0 ] ; then
+  #  echo "All monitoring chains are not finished."
+  #  echo "Sleeping for $POLLINTERVAL seconds and will check again."
+    sleep $POLLINTERVAL
+  #else
+  #  echo "All monitoring chains are finished."
+  fi
+done
+echo "All monitoring chains are finished."

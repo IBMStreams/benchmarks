@@ -1,0 +1,108 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#
+#
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name -d <data-dir> -o <output dir> -v"          
+    echo ""
+    echo "  -d <data-dir> : Directory where results are located"
+    echo "  -n <num-nodes> : Number of nodes (default 1)"
+    echo "  -o <output dir> : Directory to store results."
+    echo "  -v : verbose"
+    echo ""
+    echo "Produce a benchmark number and interval statistics baaed on a LoAnalysis run performed by autorunPerf or construnPerf"
+}
+
+DIR=`pwd`
+VERBOSE=0
+while getopts d:hn:o:s:v OPT; do
+        case ${OPT} in
+                d) DIR=${OPTARG} ;;
+		h) usage; exit 1 ;;
+                n) NUM_NODES=${OPTARG} ;;
+                o) OUT_DIR=${OPTARG} ;;
+		v) VERBOSE=1 ;;
+        esac
+done
+
+
+: ${NUM_NODES:=1}
+: ${CPUS:=-1}
+
+: ${OUT_DIR=$(readlink -f $DIR/Results)}
+if [[ $VERBOSE -eq 1 ]]; then
+    echo "Making output directory: $OUT_DIR"
+fi	
+mkdir -p $OUT_DIR
+
+EXT=
+TESTS=`ls -ld $DIR/P_* | gawk -F/ '{print $NF}'`
+for test in ${TESTS[@]}; do
+    data_dir=$DIR/$test
+
+    if [[ $VERBOSE -eq 1 ]]; then
+    	echo "Processing $data_dir"
+    fi	
+
+    tpsint_name="tpsint"
+    sources=(`ls -d $data_dir/${EXT}perf.* | gawk -F/ '{print $NF}' | gawk -F. '{print $2}' | sort -n | uniq`)
+    if [[ $VERBOSE -eq 1 ]]; then
+    	echo "Sourcs: ${sources[@]}"
+    fi	
+    for s in ${sources[@]}; do
+        interval_dir=$OUT_DIR/$test/$tpsint_name.$s
+        mkdir -p $interval_dir
+        iterations=(`ls -d $data_dir/${EXT}perf.$s.* | gawk -F/ '{print $NF}' | gawk -F. '{print $3}' | sort -n`)
+    	if [[ $VERBOSE -eq 1 ]]; then
+    	    echo "Processing data for number of sources $s, iterations: ${iterations[@]}"
+    	fi
+	cpu_line="CPU %"
+	mem_line="Memory (MB)"
+	
+        for i in ${iterations[@]}; do
+	    this_perf_dir=$data_dir/${EXT}perf.$s.$i
+	    interval_file=$interval_dir/${EXT}$tpsint_name.$s.$i
+	    if [[ $VERBOSE -eq 1 ]]; then
+	    	echo "Processing data from $this_perf_dir into file $interval_file"
+	    fi	
+	    epoch_time=`head -n 1 $this_perf_dir/adjustedStats/A1.source-stats.$NUM_NODES.$CPUS | awk '//{printf("%d",$2)}'`
+	    echo $s.$i > $interval_file
+	    echo $epoch_time >> $interval_file
+	    echo `date -d @$epoch_time +%D` >> $interval_file
+	    echo `date -d @$epoch_time +%T` >> $interval_file
+	    cat $this_perf_dir/rate.$NUM_NODES.$CPUS | awk '//{print $2} '>> $interval_file
+	    cpu_mem_file=$this_perf_dir/cpu-mem.$NUM_NODES.$CPUS
+	    if [[ -e $cpu_mem_file ]]; then
+                if [[ $VERBOSE -eq 1 ]]; then
+                        echo "Getting memory and CPU from $cpu_mem_file"
+                fi
+                avg_cpu=`cat $cpu_mem_file | gawk 'BEGIN{totcpu=0;count=0} //{totcpu+=$3;count++} END{printf("%5.2f\n",totcpu/count)}'`
+                cpu_line="$cpu_line, $avg_cpu"
+                avg_mem=`cat $cpu_mem_file | gawk 'BEGIN{totmem=0;count=0} //{totmem+=$2;count++} END{printf("%9.2f\n",totmem/count)}'`
+                mem_line="$mem_line, $avg_mem"
+ 	    else
+		cpu_line="$cpu_line,"
+		mem_line="$mem_line,"
+	    fi
+	done
+	echo $'test\nepoch\ndate\ntime'> $interval_dir/col1.txt
+	paste -d, $interval_dir/col1.txt $interval_dir/$tpsint_name.* > $interval_dir/$tpsint_name.$s.csv
+	echo "$cpu_line" >> $interval_dir/$tpsint_name.$s.csv
+	echo "$mem_line" >> $interval_dir/$tpsint_name.$s.csv
+    done
+done

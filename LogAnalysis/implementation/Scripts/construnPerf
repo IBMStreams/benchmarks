@@ -1,0 +1,110 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#
+
+
+NODESDEFAULT=1
+NODES=${NUM_NODES:-$NODESDEFAULT}
+
+DIR=$(dirname $0)
+DIR=$(readlink -f $DIR)
+CPUSDEFAULT=-1
+CPUS=${CPUS:-$CPUSDEFAULT}
+
+if [ -z "$RESULTS_DIR" ] ; then
+  RESULTS_PARM=
+  data_dir_root=$DIR/../Results/Perf
+else
+  mkdir -p $RESULTS_DIR
+  RESULTS_PARM="-d $RESULTS_DIR"
+  data_dir_root=$RESULTS_DIR/Perf
+fi
+
+#Restart the instance
+LA_DO_SETUP_DEFAULT=1
+LA_DO_SETUP=${LA_DO_SETUP:-$LA_DO_SETUP_DEFAULT}
+if [ "x$LA_DO_SETUP" == "x1" ] ; then
+  ./instanceStop
+  ./instanceStart
+fi
+
+MIN_NUMSOURCESDEFAULT=8
+MIN_NUMSOURCES=${MIN_NUMSOURCES:-$MIN_NUMSOURCESDEFAULT}
+
+MAX_NUMSOURCESDEFAULT=8
+MAX_NUMSOURCES=${MAX_NUMSOURCES:-$MAX_NUMSOURCESDEFAULT}
+
+TEST_ITERATIONSDEFAULT=1
+TEST_ITERATIONS=${TEST_ITERATIONS:-$TEST_ITERATIONSDEFAULT}
+
+
+HOSTS=`cat $DIR/../Scripts/hosts | grep analytic | cut -f 1 -d " "`
+NUM_THREADS=`ssh $HOSTS 'cat /proc/cpuinfo | grep "^processor" | wc -l'`
+
+TESTSALL="P_BAS_1 P_FLT_1 P_FLT_2 P_ENR_1 P_ENR_2 P_PRJ_1 P_AGG_1 P_AGG_2 P_AGG_3 P_AGG_4 P_STM_1 P_STM_2 P_SPT_1 P_COR_1 P_COR_2 P_COR_3 P_PTD_1 P_PTD_2 P_PTD_3 P_PTD_4"
+TESTS=${TESTS:-$TESTSALL}
+TESTS=($TESTS)
+
+
+# Run the performance tests for specified number of iterations
+for test in "${TESTS[@]}"
+do 
+  ls -d $DIR/../Tests/*/$test >/dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo "Cannot find test '$test'">/dev/stderr
+    exit 1
+  fi
+
+  test_dir=$(find $DIR/../Tests -type d -name $test -not -path */output.*)
+
+  for cpu in "${CPUS[@]}"
+  do
+    sources=8
+
+    # Num sources
+    sources=$MIN_NUMSOURCES
+
+    while [ $sources -le $MAX_NUMSOURCES ] ; do
+      $DIR/internal/logMsg "Test with $sources event sources, $NODES node(s) and $cpu CPUS"
+      ./testClean $test $sources
+      ./testBuild $test $sources $NODES $RESULTS_PARM -s $INITIAL_SETTLE_TIME
+
+      loop=1
+      while [ $loop -le $TEST_ITERATIONS ] ; do
+	$DIR/internal/logMsg "Test with $sources event sources, $NODES node(s) and $cpu CPUS Iteration $loop"
+        ./testRun $test $sources $NODES $cpu $RESULTS_PARM
+        data_dir=$data_dir_root/$test
+	if [ -e $data_dir/perf.$sources.$loop ]; then
+	    rm -rf $data_dir/perf.$sources.$loop
+	fi
+        mv $data_dir/perf.$sources $data_dir/perf.$sources.$loop
+        $DIR/internal/logMsg "Moved $data_dir/perf.$sources to $data_dir/perf.$sources.$loop."
+
+        loop=$(($loop+1))
+        sleep 60
+      done
+
+      sources=$(($sources+4))
+    done
+  done
+done
+$DIR/internal/logMsg "construnPerf complete.  output in $data_dir_root"
+#for (( i=1; i<=$TEST_ITERATIONS; i++ )); do
+#        internal/benchmarkNumber -d $data_dir_root -s .$i -v
+#done
+$DIR/utilities/constResults -d $data_dir_root -n $NUM_NODES -v
+$DIR/utilities/getLAfiles -d $data_dir_root -o $data_dir_root/Results -v
+$DIR/internal/logMsg "Processing complete on $data_dir_root"
+                                                                                 

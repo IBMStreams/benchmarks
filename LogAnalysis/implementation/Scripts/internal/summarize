@@ -1,0 +1,286 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# Compute performance stats for the current run - average rate, cpu utilization and memory utilization
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <test-name> <num-event-sources> <num-nodes> <num-cpus>"
+    echo ""
+    echo "  - <test-name> : Name of the test, as in F_BAS_1."
+    echo "  - <num-event-sources> : Total no. of event sources. Must be a multiple of 4"
+    echo "    eg: num-event-sources = 40, generates 10 event sources for each pool P1, P2, P3, P4 "
+    echo "  - <num-nodes> : Number of nodes to use."
+    echo "  - <num-cpus> : Number of CPUs to use on each node (-1 means all)."
+    echo ""
+    echo "Summarize performance numbers for a given test. Sample usage:"
+    echo "    $name P_BAS_1 40 2 4"
+}
+
+function summarizeOneSourceFile
+{       
+     kind=$1
+     index=$2
+     file="$ADJUSTED_DATA_DIR/$kind$index.source-stats.$NUM_NODES.$NUM_CPUS"
+     sum=0
+     count=0 
+
+     while read x; 
+     do
+         sum=$(($sum+$x))
+         count=$(($count+1))
+     done < <(cat $file | cut -d " " -f 6 | sed 's/[.,].*//') 
+     rate=$(($sum/$count))     
+     echo $rate
+}
+
+function summarizeOneSinkFile
+{       
+     kind=$1
+     index=$2
+     type=$3
+     if [ $type == "rate" ]; then
+         field=6
+     else # latency
+         field=8
+     fi
+     file="$ADJUSTED_DATA_DIR/$kind$index.sink-stats.$NUM_NODES.$NUM_CPUS"
+     sum=0
+     count=0 
+     while read x; 
+     do
+         sum=$(($sum+$x))
+         count=$(($count+1))
+     done < <(cat $file | cut -d " " -f $field | sed 's/\..*//') 
+     avg=$(($sum/$count)) 
+     echo "$avg"      
+}
+
+function summarizeSourceStats
+{
+    if [ -e $ADJUSTED_DATA_DIR/A1.source-stats.$NUM_NODES.$NUM_CPUS ]; then
+        sumA=0
+        sumB=0
+        echo -e "Source\tRate_A\tRate_B\tAvg_A_B (tuples/sec)"
+        for (( index=1; index<=$NUM_SOURCES_PER_KIND; index++ )); 
+        do
+            rateA=$(summarizeOneSourceFile "A" $index)
+            sumA=$(($sumA+$rateA))
+            rateB=$(summarizeOneSourceFile "B" $index)
+            sumB=$(($sumB+$rateB))
+            rate=$((($rateA+$rateB)/2))
+            echo -e "$index\t$rateA\t$rateB\t$rate"  
+        done
+        rateA=$(($sumA/$NUM_SOURCES_PER_KIND))
+        rateB=$(($sumB/$NUM_SOURCES_PER_KIND))
+        rate=$((($rateA+$rateB)/2))
+        echo -e "Avg\t$rateA\t$rateB\t$rate"
+        echo ""
+    fi
+}
+
+function summarizeSinkStats
+{
+    if [ -e $ADJUSTED_DATA_DIR/A1.sink-stats.$NUM_NODES.$NUM_CPUS ]; then
+        echo -e "Sink\tRate_A\tRate_B\tRate_Avg_A_B (tuples/sec)"
+        sumA=0
+        sumB=0
+        for (( index=1; index<=$NUM_SOURCES_PER_KIND; index++ )); 
+        do
+            rateA=$(summarizeOneSinkFile "A" $index "rate")
+            sumA=$(($sumA+$rateA))
+            rateB=$(summarizeOneSinkFile "B" $index "rate")
+            sumB=$(($sumB+$rateB))
+            rate=$((($rateA+$rateB)/2))
+            echo -e "$index\t$rateA\t$rateB\t$rate"  
+        done
+        rateA=$(($sumA/$NUM_SOURCES_PER_KIND))
+        rateB=$(($sumB/$NUM_SOURCES_PER_KIND))
+        rate=$((($rateA+$rateB)/2))
+        echo -e "Avg\t$rateA\t$rateB\t$rate"
+        
+        echo ""
+        echo -e "Sink\tLatency_A\tLatency_B\tLatency_Avg_A_B (nanosecs)"
+        sumA=0
+        sumB=0
+        for (( index=1; index<=$NUM_SOURCES_PER_KIND; index++ )); 
+        do
+            rateA=$(summarizeOneSinkFile "A" $index "latency")
+            sumA=$(($sumA+$rateA))
+            rateB=$(summarizeOneSinkFile "B" $index "latency")
+            sumB=$(($sumB+$rateB))
+            rate=$((($rateA+$rateB)/2))
+            echo -e "$index\t$rateA\t$rateB\t$rate"  
+        done
+        rateA=$(($sumA/$NUM_SOURCES_PER_KIND))
+        rateB=$(($sumB/$NUM_SOURCES_PER_KIND))
+        rate=$((($rateA+$rateB)/2))
+        echo -e "Avg\t$rateA\t$rateB\t$rate"
+    fi
+    
+}
+
+function summarizeMonitoringInformation
+{
+    start=`cat $ADJUSTED_DATA_DIR/*.source-stats.$NUM_NODES.$NUM_CPUS | gawk '{print $2;}' | sort | head -n 1`
+    end=`cat $ADJUSTED_DATA_DIR/*.source-stats.$NUM_NODES.$NUM_CPUS | gawk '{print $2;}' | sort | tail -n 1`
+    for node in `cat $DIR/../../Scripts/hosts | grep analytic | cut -f 1 -d " "`
+    do
+        cat $DATA_DIR/monitoring.$node.$NUM_NODES.$NUM_CPUS | gawk '{if(NR>2) print}' |
+            gawk -v start=$start -v end=$end '{if($1 >= start && $1 <= end) print $0;}' |
+                gawk -v start=$start '{print $1-start " " $19/1024 " " $14+$15;}' \
+                    > $DATA_DIR/cpu-mem.$node.$NUM_NODES.$NUM_CPUS    
+        if [ "x$DO_GNUPLOT" == "x1" ] ; then
+          $DIR/cpuMemoryPlot $DATA_DIR $node $NUM_NODES $NUM_CPUS
+        fi
+    done
+
+    timeN=(`cat $DATA_DIR/cpu-mem.$node.$NUM_NODES.$NUM_CPUS | gawk '{print "0"}'`)
+    memSumN=(`cat $DATA_DIR/cpu-mem.$node.$NUM_NODES.$NUM_CPUS | gawk '{print "0"}'`)
+    cpuSumN=(`cat $DATA_DIR/cpu-mem.$node.$NUM_NODES.$NUM_CPUS | gawk '{print "0"}'`)
+
+    minCount=${#timeN[@]}
+    for node in `cat $DIR/../../Scripts/hosts | grep analytic | cut -f 1 -d " "`
+    do
+        file="$DATA_DIR/cpu-mem.$node.$NUM_NODES.$NUM_CPUS" 
+        count=0
+        while read x; do
+            timeN[$count]=$((${timeN[$count]}+$x))
+            count=$(($count+1))
+        done < <(cat $file | cut -d " " -f 1)
+        if [ $minCount -gt $count ]; then minCount=$count; fi
+
+        count=0
+        while read x; do
+            # Round x to an integer to avoid some calculation
+            # errors later on in the script
+            x=(`echo $x | awk '{printf("%d\n",$1 + 0.5)}'`)
+            memSumN[$count]=$((${memSumN[$count]}+$x))
+            count=$(($count+1))
+        done < <(cat $file | cut -d " " -f 2)
+
+        count=0
+        while read x; do
+            cpuSumN[$count]=$((${cpuSumN[$count]}+$x))
+            count=$(($count+1))
+        done < <(cat $file | cut -d " " -f 3)    
+    done    
+
+    echo $((${timeN[0]}/$NUM_NODES)) $((${memSumN[0]}/$NUM_NODES)) $((${cpuSumN[0]}/$NUM_NODES)) > $DATA_DIR/cpu-mem.$NUM_NODES.$NUM_CPUS
+    for (( i = 1 ; i < $minCount ; i++ )) do
+        echo $((${timeN[$i]}/$NUM_NODES)) $((${memSumN[$i]}/$NUM_NODES)) $((${cpuSumN[$i]}/$NUM_NODES)) >> $DATA_DIR/cpu-mem.$NUM_NODES.$NUM_CPUS
+    done
+    if [ "x$DO_GNUPLOT" == "x1" ] ; then
+      $DIR/cpuMemoryAveragedPlot $DATA_DIR $NUM_NODES $NUM_CPUS
+    fi
+
+    timeA=(`cat $ADJUSTED_DATA_DIR/A1.source-stats.$NUM_NODES.$NUM_CPUS | gawk -v start=$start '{print $2-start;}'`)
+    timeB=(`cat $ADJUSTED_DATA_DIR/B1.source-stats.$NUM_NODES.$NUM_CPUS | gawk -v start=$start '{print $2-start;}'`)
+    sumA=(`cat $ADJUSTED_DATA_DIR/A1.source-stats.$NUM_NODES.$NUM_CPUS | cut -d " " -f 6 | sed 's/\..*//'`)
+    sumB=(`cat $ADJUSTED_DATA_DIR/B1.source-stats.$NUM_NODES.$NUM_CPUS | cut -d " " -f 6 | sed 's/\..*//'`)
+   
+    minCount=${#sumA[@]}
+    if [ $minCount -gt ${#sumB[@]} ]; then minCount=${#sumB[@]}; fi
+    for (( index=2; index<=$NUM_SOURCES_PER_KIND; index++ )); do
+        file="$ADJUSTED_DATA_DIR/A$index.source-stats.$NUM_NODES.$NUM_CPUS"
+        count=0
+        while read x; do
+            sumA[$count]=$((${sumA[$count]}+$x))
+            count=$(($count+1))
+        done < <(cat $file | cut -d " " -f 6 | sed 's/\..*//' | sed 's/,//')
+        if [ $minCount -gt $count ]; then minCount=$count; fi
+
+        count=0
+        while read x; do
+            timeA[$count]=$((${timeA[$count]}+$x-$start))
+            count=$(($count+1))
+        done < <(cat $file | cut -d " " -f 2 | sed 's/\..*//')
+
+        file="$ADJUSTED_DATA_DIR/B$index.source-stats.$NUM_NODES.$NUM_CPUS"
+        count=0
+        while read x; do
+            sumB[$count]=$((${sumB[$count]}+$x))
+            count=$(($count+1))
+        done < <(cat $file | cut -d " " -f 6 | sed 's/\..*//' | sed 's/,//')
+        if [ $minCount -gt $count ]; then minCount=$count; fi
+
+        count=0
+        while read x; do
+            timeB[$count]=$((${timeB[$count]}+$x-$start))
+            count=$(($count+1))
+        done < <(cat $file | cut -d " " -f 2 | sed 's/\..*//')
+    done
+    
+    echo $((${timeA[0]}/$NUM_SOURCES_PER_KIND)) ${sumA[0]} > $DATA_DIR/rate-A.$NUM_NODES.$NUM_CPUS
+    for (( i = 1 ; i < $minCount ; i++ )) do
+        echo $((${timeA[$i]}/$NUM_SOURCES_PER_KIND)) ${sumA[$i]} >> $DATA_DIR/rate-A.$NUM_NODES.$NUM_CPUS
+    done
+
+    echo $((${timeB[0]}/$NUM_SOURCES_PER_KIND)) ${sumB[0]} > $DATA_DIR/rate-B.$NUM_NODES.$NUM_CPUS
+    for (( i = 1 ; i < $minCount ; i++ )) do
+        echo $((${timeB[$i]}/NUM_SOURCES_PER_KIND)) ${sumB[$i]} >> $DATA_DIR/rate-B.$NUM_NODES.$NUM_CPUS
+    done
+
+    echo $(((timeA[0]+timeB[0])/$NUM_EVENT_SOURCES)) $((${sumA[0]}+${sumB[0]})) > $DATA_DIR/rate.$NUM_NODES.$NUM_CPUS
+    for (( i = 1 ; i < $minCount ; i++ ))
+    do
+        echo $(((timeA[$i]+timeB[$i])/$NUM_EVENT_SOURCES)) $((sumA[$i]+sumB[$i])) >> $DATA_DIR/rate.$NUM_NODES.$NUM_CPUS
+    done
+
+    if [ "x$DO_GNUPLOT" == "x1" ] ; then
+      $DIR/ratePlot $DATA_DIR $NUM_NODES $NUM_CPUS
+    fi
+}
+
+if [[ $# -ne 4 ]]; then
+    usage;
+    exit 1;
+fi
+
+DIR=$(dirname $0)
+DATA_DIR=$1
+NUM_EVENT_SOURCES=$2
+NUM_NODES=$3
+NUM_CPUS=$4
+
+ADJUSTED_DATA_DIR=${DATA_DIR}/adjustedStats
+
+$DIR/logMsg "summarize: processing $ADJUSTED_DATA_DIR"
+UNIQUE_START_TIMES=`head -n 1 $ADJUSTED_DATA_DIR/*source-stats*  | perl -e 'while(<>){if ($_ =~ m/^Time: (\d+)/){print "$1\n"}}' | sort -n | uniq -c | sort -rn -k 1 | head -1 | awk '//{print $1}'`
+if [[ $UNIQUE_START_TIMES -ne $NUM_EVENT_SOURCES ]]; then
+	$DIR/logMsg "summarize: something wrong in $DATA_DIR.  Expected $NUM_EVENT_SOURCES matching start times, found $UNIQUE_START_TIMES"
+fi
+UNIQUE_STOP_TIMES=`tail -n 1 $ADJUSTED_DATA_DIR/*source-stats*  | perl -e 'while(<>){if ($_ =~ m/^Time: (\d+)/){print "$1\n"}}' | sort -n | uniq -c | sort -rn -k 1 | head -1 | awk '//{print $1}'`
+if [[ $UNIQUE_STOP_TIMES -ne $NUM_EVENT_SOURCES ]]; then
+	$DIR/logMsg "summarize: something wrong in $DATA_DIR.  Expected $NUM_EVENT_SOURCES matching end times, found $UNIQUE_STOP_TIMES"
+fi
+for F in `ls $ADJUSTED_DATA_DIR/*source-stats*`; do
+	LINE_COUNT=`wc -l $F | awk '//{print $1}'`
+	FIRST_LINE=`head -n 1 $F | awk '//{print $2}'`
+	LAST_LINE=`tail -n 1 $F | awk '//{print $2}'`
+	if [[ $LINE_COUNT -ne $(( (LAST_LINE-FIRST_LINE)/30 + 1 )) ]]; then
+		$DIR/logMsg "summarize: something wrong in $DATA_DIR $F.  Line count = $LINE_COUNT does not match"
+	fi
+done
+
+NUM_SOURCES_PER_KIND=$(($NUM_EVENT_SOURCES/2))
+
+# summarize monitoring information for cpu-mem
+echo "summarizeMonitoringInformation...."
+summarizeMonitoringInformation
+
+# summarize source statistics
+echo "summarizeSourceStats...."
+summarizeSourceStats
+
+# summarize sink statistics
+echo "summarizeSinkStats...."
+summarizeSinkStats
+echo "all summary done...."

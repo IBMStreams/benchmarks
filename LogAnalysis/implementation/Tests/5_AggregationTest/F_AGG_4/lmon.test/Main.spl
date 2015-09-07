@@ -1,0 +1,138 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+composite OneChain(output stream<uint64 count> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Beat = FileSource() {
+            param
+                file : getSubmissionTimeValue("dataDir", "../../../../Data") + "/DataFiles/" +
+                       (rstring) $sourceKind + (rstring) $sourceIndex + "/input-data";
+                format : line;
+                parsing : fast;            
+        }
+
+        stream<Event.Log> Parsed = EventParser(Beat) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind); 
+        }
+
+        stream<uint64 count> Out = Custom(Parsed) {
+            logic
+                state : 
+                    mutable tuple<uint64 count> res = { count = 0ul };
+                onTuple Parsed : {
+                    if(eventKind==Event.Msg_Rcvd && sourceKind==Event.A)
+                        res.count++;
+                }
+                onPunct Parsed : {
+                    if(currentPunct()==Sys.FinalMarker)
+                        submit(res, Out);
+                }
+        }
+}
+
+composite OnePool(input stream<uint64 count> In;
+                  output stream<uint32 poolIndex, uint64 count> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;    
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndexStart;    
+        expression<uint32> $sourceIndexEnd;    
+    graph
+        // Merges the counts from the event sources
+        stream<uint32 poolIndex, uint64 count> Out = Custom(In) {
+            logic
+                state : {
+                    mutable uint32 eventsReceived = 0u;
+                    mutable tuple<uint32 poolIndex, uint64 count> 
+                        res = { poolIndex = $poolIndex, count = 0ul };
+                }
+                onTuple In : {
+                    res.count += In.count;
+                    eventsReceived++;
+                    if(eventsReceived == ($sourceIndexEnd - $sourceIndexStart + 1u)) 
+                        submit(res, Out);   
+                }
+        }               
+}
+
+composite Combiner(input stream<uint32 poolIndex, uint64 count> In)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndexStart;
+        expression<uint32> $poolIndexEnd;
+        expression<uint32> $sourceIndexStart;
+        expression<uint32> $sourceIndexEnd;
+    graph
+        stream<uint32 poolIndex, uint64 count> Merged = Custom(In) {
+            logic
+                state : {
+                    mutable uint32 eventsReceived = 0u;
+                    mutable tuple<uint32 poolIndex, uint64 count> 
+                        res = { poolIndex = 0u, count = 0ul };
+                }
+                onTuple In : {
+                    if(res.count < In.count){
+                        res.count = In.count;
+                        res.poolIndex = In.poolIndex;
+                    }
+                    eventsReceived++;
+                    if(eventsReceived == ($poolIndexEnd - $poolIndexStart + 1u))
+                        submit(res, Merged);
+                }
+        }
+
+        () as Sink = FileSink(Merged) {
+            param
+                file : "pool.max";
+                format : txt;
+        }
+}
+
+
+composite Main 
+{
+  graph
+      () as Sink1 = CommonMainWithPoolsAndCombiner() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                chainCore : lmon.test::OneChain; 
+                poolCore : lmon.test::OnePool;
+                combinerCore : lmon.test::Combiner; 
+                chainOutputType : tuple<uint64 count>;
+                poolOutputType : tuple<uint32 poolIndex, uint64 count>;
+      }
+
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared); 
+}
+

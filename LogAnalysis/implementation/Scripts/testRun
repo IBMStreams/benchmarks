@@ -1,0 +1,331 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                                                                                        
+
+# This script is used to run the test after it is built. 
+# If the option "-d" was used to specify the location of 
+# output perf directory while building this spefic test, 
+# make sure to use option "-d" with testRun as well, 
+# specifying the same output perf directory that was 
+# specified while building this test. 
+
+# initial settling time (in seconds)
+INITIAL_SETTLE_TIMEDEFAULT=60
+export INITIAL_SETTLE_TIME=${INITIAL_SETTLE_TIME:-$INITIAL_SETTLE_TIMEDEFAULT}
+
+# total duration of monitoring (in minutes)
+MONITORING_TIMEDEFAULT=5
+export MONITORING_TIME=${MONITORING_TIME:-$MONITORING_TIMEDEFAULT}
+
+# the time interval for monitoring (in seconds)
+TEST_INTERVALDEFAULT=15
+export TEST_INTERVAL=${TEST_INTERVAL:-$TEST_INTERVALDEFAULT}
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <test-name> <num-event-sources> <num-nodes> [<num-cpus>] [-d <out-perf-dir>]"
+    echo ""
+    echo "  - <test-name> : Name of the test, as in F_BAS_1."
+    echo " - <num-event-sources> :  Total no. of event sources. Must be a multiple of 4"
+    echo "    eg: num-event-sources = 40, generates 10 event sources for each pool P1, P2, P3, P4 "
+    echo "  - <num-nodes> : Number of nodes to use."
+    echo "  - <num-cpus> : Number of CPUs to use on each node. By default all cores will be used."
+    echo "  - Optional [-d <out-perf-dir>] : Specify the location of the performance stats,"
+    echo "                                   such as throughput, latency, computed by the application"
+    echo "     By default, the location of the performance stats is LogAnalysisBenchmark/implementation/Results"
+    echo "     Note: The actual output of the application is different from performance stats"
+
+    echo ""
+    echo "Run a given test. Sample usage:"
+    echo "    $name F_BAS_1 40 2 4 [-d /home/<USER>/Results]"
+}
+
+# Has monitoring been stopped ? Initialized to "No"
+mon_cancelled=No
+mon2_cancelled=No
+
+# Cleanup - cancel job, remove job files, stop monitoring 
+function cleanup()
+{
+    if [ "x$JOB_FILE" != "x" ]; then
+        if [ -e $JOB_FILE ]; then
+            echo "Cancelling Streams job..."
+            streamtool canceljob -i $LMON_INSTANCE --file $JOB_FILE 
+            echo "Waiting job to terminate..."
+            while [[ "$(streamtool  lspes -i $LMON_INSTANCE -xheader | wc -l)" -gt 0 ]]; 
+            do
+                sleep 1;
+            done
+            # remove job submission file
+            rm -fr $JOB_FILE
+        fi
+    fi
+
+    # Stop monitoring if its Performance test
+    if [[ $TEST_NAME == P* ]]; then
+        if [ "x$mon_cancelled" == "xNo" ]; then
+            echo "Cancelling monitoring scripts..."
+            $DIR/internal/monitoringStop $DATA_DIR $TEST_INTERVAL $NUM_NODES $NUM_CPUS
+            mon_cancelled=Yes
+        fi
+        if [ "x$mon2_cancelled" == "xNo" ]; then
+            echo "Cancelling monitor chain scripts..."
+            $DIR/internal/monitorChainClean $DATA_DIR $TEST_INTERVAL $NUM_NODES $NUM_CPUS
+            mon2_cancelled=Yes
+        fi
+    fi
+}
+ 
+# get the user-specified location where output perf data is to be stored
+# Optional parameter "-d <out-perf-dir>" is used to specify this location
+function set_dir_of_outperf
+{
+    # opt_d_found is set to 1 if the argument "-d" is found by getopt 
+    opt_d_found=0
+    while getopts :d: opt 
+    do
+	case $opt in
+	    d ) OUT_PERF_DIR=$(readlink -f $OPTARG)/Perf/$TEST_NAME/perf.$NUM_EVENT_SOURCES; 
+		echo The output performance stats will be saved in $OUT_PERF_DIR;
+		opt_d_found=1;
+		break;;
+	    \? ) echo "Invalid option: -$OPTARG" >&2;
+		exit 1;;
+	    -- ) shift; break;;
+	    -* ) echo usage; exit 1;;
+	    : ) echo "Option -$OPTARG requires an argument." >&2;
+		usage;
+		exit 1;;
+	esac
+    done
+    if [[ "x$opt_d_found" == "x0" ]]; then
+	usage;
+	exit 1;
+   fi
+}
+
+# if invalid number of arguments are entered, exit
+if [[ $# -lt 3 || $# -gt 6 ]]; then
+    usage;
+    exit 1;
+fi
+
+# Trap for cleanup
+trap "cleanup;" EXIT
+trap "cleanup; exit 1;" INT TERM
+
+# Verify if the test name is valid
+TEST_NAME=$1
+DIR=$(dirname $0)
+ls -d $DIR/../Tests/*/$TEST_NAME >/dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "Cannot find test '$TEST_NAME'">/dev/stderr
+    exit 1
+fi
+
+# Verify that number of event sources is a positive non-zero integer
+# and a multiple of 4
+NUM_EVENT_SOURCES=$2
+isPosInt='^[0-9]+$'
+if [[ "x$2" == "x"*[!0-9]* || "x$2" == "x0" || "x$2" == "x" || $(expr $2 % 4) -ne 0 ]]; then
+    echo "No. of event sources must be a positive non-zero integer and a multiple of 4";
+    echo "";
+    usage;
+    exit 1;
+fi
+
+# Verify that the number of nodes entered is a positive non-zero integer
+NUM_NODES=$3
+if [[ "x$3" == "x"*[!0-9]* || "x$3" == "x0" || "x$3" == "x" ]]; then
+    echo "No. of nodes must be a positive non-zero integer ";
+    echo "";
+    usage;
+    exit 1;
+fi
+
+# If there are 4 or 6 arguments, then the 4th argument has to represent no. of CPUs
+# NUM_CPUS<0 implies that all the available processors of the system will be used.
+# Verify that the number of CPUs entered is an integer.
+NUM_CPUS=-1
+isInt='^-?[0-9]+$'
+if [[ $# -eq 4 || $# -eq 6 ]] ; then
+    if [[ $4 =~ $isInt ]] ; then
+	NUM_CPUS=$4
+    else
+	echo "Not a valid argument"
+	usage
+	exit 1
+    fi
+fi
+
+# If there are 5 arguments, the 4th argument has to be "-d" 
+# followed by output perf directory as the 5th argument 
+if [[ $# -eq 5 ]]; then
+    # shift args 3 positions to the left so that the 4th argument becomes the 1st
+    shift; shift; shift; 
+    set_dir_of_outperf $1 $2
+fi
+
+# If there are 6 arguments, then 5th must be "-d" 
+# followed by output perf directory as the 6th argument
+if [[ $# -eq 6 ]]; then
+    # shift args 4 positions to the left so that the 5th argument becomes the 1st
+    shift; shift; shift; shift;
+    set_dir_of_outperf $1 $2
+fi
+
+# Set a default value for output performance directory
+: ${OUT_PERF_DIR=$(readlink -f $DIR/../Results)/Perf/$TEST_NAME/perf.$NUM_EVENT_SOURCES}
+
+# Setup paths
+TEST_DIR=$(find $DIR/../Tests -type d -name $TEST_NAME -not -path */output.*)
+LMON_INSTANCE=${INSTANCE:-LMON_Benchmark}
+ADL=$TEST_DIR/output.${NUM_EVENT_SOURCES}/lmon.test.Main.$NUM_NODES.adl
+DATA_DIR=$OUT_PERF_DIR
+ADLCOPY=$TEST_DIR/output.${NUM_EVENT_SOURCES}/lmon.test.Main.adl
+SAB=$TEST_DIR/output.${NUM_EVENT_SOURCES}/lmon.test.Main.$NUM_NODES.sab
+SABCOPY=$TEST_DIR/output.${NUM_EVENT_SOURCES}/lmon.test.Main.sab
+
+mkdir -p $DATA_DIR
+
+# Remove old results
+rm -fr $TEST_DIR/data/* 
+
+# Build 
+if [[ ! -e $ADL ]]; then 
+    echo "The test '$TEST_NAME' is not yet built.">/dev/stderr
+    exit 1
+fi
+
+if [[ $TEST_NAME == P* ]]; then
+    $DIR/internal/numastatSnapshot $DATA_DIR $NUM_NODES $NUM_CPUS BEFORE
+fi
+
+# Submit
+if [[ $NUM_CPUS -ne -1 ]]; then
+    SUBMIT_ARGS="-P nCPUs=$NUM_CPUS "
+fi
+JOB_FILE=$(mktemp)
+if [[ "x$LA_PRE_SUBMITJOB_COMMAND" != "x" ]]; then
+    hosts=$(cat $DIR/hosts | grep analytic | cut -f 1 -d " ")
+    for host in $hosts; do
+        $DIR/internal/logMsg "Running $LA_PRE_SUBMITJOB_COMMAND on $host"
+        ssh -qx $LA_PRE_SUBMITJOB_COMMAND 
+    done
+fi
+$DIR/internal/logMsg "submitting job $ADLCOPY with arguments $SUBMIT_ARGS"
+cp -f $ADL $ADLCOPY
+cp -f $SAB $SABCOPY
+streamtool submitjob -i $LMON_INSTANCE --outfile $JOB_FILE $SUBMIT_ARGS $ADLCOPY || exit 1
+RC=$?
+if [ 0 -ne $RC ] ; then
+  $DIR/internal/logMsg "Error submitting job"
+  exit 1
+fi
+$DIR/internal/logMsg "submitjob complete"
+
+# Functional test
+if [[ $TEST_NAME == F* ]]; then
+    wait=0; # wait for completeness
+    step=10; # secs for each step
+    maxWait=600; # 10 minutes
+    while [ $wait -lt $maxWait ]; do
+        sleep $step
+        echo "Checking completeness..."
+        $TEST_DIR/checkCompleteness >/dev/null
+        if [ $? -eq 0 ]; then
+            break;
+        fi
+        wait=$(($wait+$step))
+    done
+    # Cancel
+    streamtool canceljob -i $LMON_INSTANCE --file $JOB_FILE || exit 1
+    rm -f $JOB_FILE
+    # Verify
+    if [ $wait -ge $maxWait ]; then
+        echo "Verification of test has failed (timed out).">/dev/stderr
+        failed=1        
+    else
+        echo "Verifying correctness..."
+        $TEST_DIR/checkCorrectness
+        if [ $? -ne 0 ]; then
+            failed=1        
+            echo "Verification of test has failed (incorrect results).">/dev/stderr
+        else
+            echo "Verification of test has succeeded">/dev/stderr
+        fi
+    fi
+# Performance test
+else
+    SETTLE_TIMEOUT=$((2*INITIAL_SETTLE_TIME))
+    SETTLE_INCREMENT=30
+    $DIR/internal/logMsg "Waiting for performance test to settle until all data files in $DATA_DIR or a fixed ($SETTLE_TIMEOUT seconds) amount of time..."
+    sleep $INITIAL_SETTLE_TIME
+    for (( z=0; z<=$SETTLE_TIMEOUT; z=z+SETTLE_INCREMENT ))
+    do
+        FILE_COUNT=`ls $DATA_DIR | awk '/\.source-stats\./{print $0}' | wc -l`
+	$DIR/internal/logMsg "$FILE_COUNT files found in $DATA_DIR on interval $z.  Waiting for $SETTLE_TIMEOUT seconds for $NUM_EVENT_SOURCES"
+	[[ $FILE_COUNT -lt $NUM_EVENT_SOURCES ]] || break;
+	sleep $SETTLE_INCREMENT
+    done
+    $DIR/internal/checkJob
+    $DIR/internal/logMsg "Monitor the hosts using vmstat/mpstat/top at the specified time interval" 
+    $DIR/internal/monitoringStart $DATA_DIR $TEST_INTERVAL $NUM_NODES $NUM_CPUS
+    $DIR/internal/logMsg "Waiting for performance test to run for a fixed ($MONITORING_TIME minutes) amount of time..."
+    MONITOR_INTERVAL_START=`date +%s`
+    for (( z=1; z<=$MONITORING_TIME; ++z ))
+    do
+      sleep 60
+      echo "$z minute has elapsed..."
+    done
+    MONITOR_INTERVAL_END=`date +%s`
+    $DIR/internal/logMsg "Gathering statistics for monitoring period $MONITOR_INTERVAL_START to $MONITOR_INTERVAL_END"
+    $DIR/internal/adjustStats $DATA_DIR $MONITOR_INTERVAL_START $MONITOR_INTERVAL_END 30
+    $DIR/internal/monitoringStop $DATA_DIR $TEST_INTERVAL $NUM_NODES $NUM_CPUS
+
+    $DIR/internal/logMsg "Running additional performance monitors..."
+    $DIR/internal/monitorChainStart $DATA_DIR $TEST_INTERVAL $NUM_NODES $NUM_CPUS
+    $DIR/internal/checkJob
+    streamtool lspes -i $LMON_INSTANCE | grep Stop  
+#    if [ $? -eq 0 ]; then
+#        failed=1     
+#        echo "Performance test has failed (there were failed PEs)." >/dev/stderr
+#        echo "Getting logs." >/dev/stderr
+#        streamtool getlog -i $LMON_INSTANCE -j $(cat $JOB_FILE)
+#    fi      
+    streamtool getlog -i $LMON_INSTANCE --includeapps --file $DATA_DIR/StreamsLogs.tgz
+    streamtool lspes -i $LMON_INSTANCE -l -v > $DATA_DIR/PElist.txt 
+    ps -eLo comm,pid,tid | awk '/streams-pec/{printf("Name: %s pid: %d tid: %d ",$1,$2,$3);cmd=sprintf("taskset -p %d",$3);system(cmd)}' > $DATA_DIR/ProcessAffinityList.txt 
+    # Cancel
+    $DIR/internal/logMsg "cancelling job"
+    streamtool canceljob -i $LMON_INSTANCE --file $JOB_FILE || exit 1
+    $DIR/internal/logMsg "canceljob complete"
+    rm -f $JOB_FILE
+    if [[ $TEST_NAME == P* ]]; then
+       $DIR/internal/numastatSnapshot $DATA_DIR $NUM_NODES $NUM_CPUS AFTER
+    fi
+    if [ "x$failed" != "x1" ]; then
+        echo "Dumping results..."
+        $DIR/internal/summarize $DATA_DIR $NUM_EVENT_SOURCES $NUM_NODES $NUM_CPUS | tee $DATA_DIR/perf.summary.$NUM_EVENT_SOURCES.$NUM_NODES.$NUM_CPUS
+        if [ $? -ne 0 ]; then
+            echo "Performance test has failed.">/dev/stderr
+            failed=1        
+        fi 
+    fi   
+fi
+
+if [ "x$failed" == "x1" ]; then
+    exit 1;
+fi

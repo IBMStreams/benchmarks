@@ -1,0 +1,21 @@
+#!/usr/bin/perl
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#              
+
+use strict;
+use warnings;
+use POSIX qw(strftime);
+use Time::HiRes qw(gettimeofday usleep);                                                    
+
+my $interval=$ARGV[0];
+my ($time, $us) = gettimeofday();
+my $sleep = ($interval - ($time % $interval)) * 1000000 - $us;
+#print "interval $interval, time $time.$us sleep $sleep\n";
+usleep($sleep);
+
+

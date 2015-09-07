@@ -1,0 +1,171 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+
+/* This composite operator correlates sent and received events for each message,
+ * and finds out the number of unmatched events. It also computes average
+ * latency and, if desired, filters the messages that are below the current
+ * average before forwarding them.
+ * @input In port that consumes events from a single event source.
+ * @output Out port that produces the matched events, or a filtered subset of them.
+ * @output Samples port that produces periodic updates on the number of unmatched events.
+ * @param filterOnAverage whether filtering should be applied based on latency
+ * averages (false by default)
+ * @param period the period for the updates on the number of unmatched
+ * events. if 0 (default setting), no updates are sent.
+ *
+ * Note: this composite declares an event as unmatched if it does not get a
+ * matching pair with 1 minutes (in timestamp time).
+ */
+public composite CorrelateMessages(input In; output 
+    stream<uint64 messageId, uint64 deltaMillis, uint64 timeMillis> Out, 
+    stream<uint32 unmatched> Sampled)
+{
+    param 
+        expression<boolean> $filterOnAverage : false; // do we filter below average messages
+        expression<uint32> $period : 0u; // by default we do not report summaries periodically
+    graph
+        stream<uint8 dummy> Beat = OptionalBeat() { 
+            param 
+                period: $period; 
+        }
+        (stream<uint64 messageId, uint64 deltaMillis, uint64 timeMillis> Out;
+         stream<uint32 unmatched> Sampled) = Custom(In; Beat) {
+             logic
+                state:
+                {
+                    mutable uint64 deltaSum = 0ul;
+                    mutable uint64 deltaCount = 0ul;
+                    mutable uint64 currentTime = 0ul;
+                    mutable map<uint64, uint64> store = {}; // message id -> time
+                    mutable tuple<uint64 messageId, uint64 deltaMillis, uint64 timeMillis> d = {};
+                }
+                onTuple In:
+                {
+                    if(eventKind == Event.Msg_Rcvd || eventKind == Event.Msg_Sent) {
+                        currentTime = timeMillis;
+                        if(messageId in store) {
+                            d.messageId = messageId;
+                            d.timeMillis = timeMillis;
+                            d.deltaMillis = timeMillis - store[messageId];
+                            removeM(store, messageId);
+                            if($filterOnAverage) {
+                                if(deltaCount == 0ul || d.deltaMillis > deltaSum/deltaCount)
+                                    submit(d, Out);
+                                deltaSum += d.deltaMillis;
+                                deltaCount++;                                
+                            } else {
+                                submit(d, Out);
+                            }
+                        } else {
+                            store[messageId] = timeMillis;
+                        }
+                    }
+                }
+                onTuple Beat:
+                {      
+                    mutable list<uint64> toRemove = [];
+                    for(uint64 messageId in store) {
+                        if(currentTime-store[messageId] > 60ul*1000ul)  // minute
+                            appendM(toRemove, messageId);                        
+                    }
+                    for(uint64 messageId in toRemove) 
+                        removeM(store, messageId);
+                    submit({unmatched=(uint32)size(toRemove)}, Sampled);                  
+                }
+        }
+}
+
+/* This composite operator cross correlates already matched sent and received
+ * events for each message from A and B sources, and finds out the
+ * number of unmatched messages (appears in one of A or B, but not both) as
+ * well as other statistics.
+ * @input In port that consumes the matched messages from a single A and B source pair.
+ * @output Out port that produces the same tuples, or a filtered subset of them.
+ * @output Samples port that produces periodic updates on the number of
+ * unmatched events, average total delta time (sum of delta times from A and B),
+ * and the total number of unmatched tuples so far (exceptions).
+ * @param period the period for the updates on the number of unmatched
+ * events.
+ *
+ * Note: this composite declares an event as unmatched if it does not get a
+ * matching pair with 1 minutes (in timestamp time).
+ */
+public composite CrossCorrelateMessages(input In; output 
+    stream<uint64 messageId, uint64 totalDeltaMillis, uint64 timeMillis> Out, 
+    stream<uint32 unmatched, uint64 avgTotalDeltaMillis, uint64 exceptions> Sampled)
+{
+    param 
+        expression<uint32> $period : 0u; // by default we do not report summaries periodically
+    graph
+        stream<uint8 dummy> Beat = OptionalBeat() { 
+            param 
+                period: $period; 
+        }
+        (stream<uint64 messageId, uint64 totalDeltaMillis, uint64 timeMillis> Out;
+         stream<uint32 unmatched, uint64 avgTotalDeltaMillis, uint64 exceptions> Sampled) = Custom(In; Beat) {
+             logic
+                state:
+                {
+                    mutable uint64 deltaSum = 0ul;
+                    mutable uint64 deltaCount = 0ul;
+                    mutable uint64 exceptions = 0ul;
+                    mutable uint64 currentTime = 0ul;
+                    mutable map<uint64, tuple<uint64 deltaMillis, uint64 timeMillis>> store = {}; 
+                    mutable tuple<uint64 messageId, uint64 totalDeltaMillis, uint64 timeMillis> d = {};
+                }
+                onTuple In:
+                {
+                    currentTime = max(timeMillis, currentTime);
+                    if(messageId in store) {
+                        d.messageId = messageId;
+                        d.timeMillis = max(timeMillis, d.timeMillis);
+                        d.totalDeltaMillis = deltaMillis + store[messageId].deltaMillis;
+                        removeM(store, messageId);                          
+                        submit(d, Out);
+                        if(deltaCount > 0ul && d.totalDeltaMillis > deltaSum/deltaCount)
+                            exceptions++;                        
+                        deltaSum += d.totalDeltaMillis;
+                        deltaCount++;
+                    } else {
+                        store[messageId] = { deltaMillis = deltaMillis, timeMillis = timeMillis };
+                    }
+                }
+                onTuple Beat:
+                {      
+                    if(deltaCount>0ul) {
+                        mutable list<uint64> toRemove = [];
+                        for(uint64 messageId in store) {
+                            if(currentTime-store[messageId].timeMillis > 60ul*1000ul)  // minute
+                                appendM(toRemove, messageId);                        
+                        }
+                        for(uint64 messageId in toRemove) 
+                            removeM(store, messageId);
+                        uint32 unmatched = size(toRemove);
+                        exceptions += (uint64) unmatched;
+                        uint64 avgDelta = deltaSum/deltaCount;
+                        submit({unmatched=unmatched, avgTotalDeltaMillis=avgDelta, exceptions=exceptions}, Sampled);
+                    }
+                }
+        }
+}
+

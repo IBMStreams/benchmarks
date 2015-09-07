@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<!-- begin_generated_IBM_copyright_prolog                             -->
+<!--                                                                  -->
+<!-- This is an automatically generated copyright prolog.             -->
+<!-- After initializing,  DO NOT MODIFY OR MOVE                       -->
+<!-- **************************************************************** -->
+<!-- Licensed Materials - Property of IBM                             -->
+<!-- 5724-Y95                                                         -->
+<!-- (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      -->
+<!-- US Government Users Restricted Rights - Use, duplication or      -->
+<!-- disclosure restricted by GSA ADP Schedule Contract with          -->
+<!-- IBM Corp.                                                        -->
+<!--                                                                  -->
+<!-- end_generated_IBM_copyright_prolog                               -->
+<toolkitModel xmlns="http://www.ibm.com/xmlns/prod/streams/spl/toolkit" productVersion="3.2.1.1" xmlns:common="http://www.ibm.com/xmlns/prod/streams/spl/common" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <toolkit name="P_AGG_1" requiredProductVersion="2.0" version="1.0.0">
+    <description>Toolkit Description</description>
+    <uriTable>
+      <uri index="1" value="lmon.test/Main.spl"/>
+    </uriTable>
+    <namespace name="lmon.test">
+      <compositeOp column="11" line="12" name="OneChain" potentialMain="false" uriIndex="1">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+      </compositeOp>
+      <compositeOp column="11" line="75" name="Main" potentialMain="true" uriIndex="1"/>
+    </namespace>
+  </toolkit>
+
+</toolkitModel>

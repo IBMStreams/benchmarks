@@ -1,0 +1,27 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+
+#Shortcut to create a new config script.
+# After creation, the config will likely want to be manually modified.
+
+DIR=$(dirname $0)/..
+DIR=$(readlink -f $DIR)
+OLDFILE=$DIR/config.sh.template
+NEWFILE=$DIR/config.sh
+
+cp $OLDFILE $NEWFILE
+chmod +w $NEWFILE
+
+echo "Config file created:  $NEWFILE"

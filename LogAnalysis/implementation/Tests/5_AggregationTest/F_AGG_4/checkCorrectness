@@ -1,0 +1,25 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+DATA_DIR=$(dirname $0)/data
+BASE_DATA_DIR=$DATA_DIR/../../../../Data/DataFiles
+
+function checkFile
+{
+    file=$DATA_DIR/pool.max
+    diff $file <(echo "{poolIndex=1,count=2000000}") > /dev/null ||
+       diff $file <(echo "{poolIndex=2,count=2000000}")
+}
+
+# Check the file
+checkFile
+if [ $? -ne 0 ]; then
+    exit 1;
+fi

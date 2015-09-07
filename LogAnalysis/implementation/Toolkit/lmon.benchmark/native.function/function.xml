@@ -1,0 +1,53 @@
+<!-- begin_generated_IBM_copyright_prolog                             -->
+<!--                                                                  -->
+<!-- This is an automatically generated copyright prolog.             -->
+<!-- After initializing,  DO NOT MODIFY OR MOVE                       -->
+<!-- **************************************************************** -->
+<!-- Licensed Materials - Property of IBM                             -->
+<!-- 5724-Y95                                                         -->
+<!-- (C) Copyright IBM Corp.  2014, 2015    All Rights Reserved.      -->
+<!-- US Government Users Restricted Rights - Use, duplication or      -->
+<!-- disclosure restricted by GSA ADP Schedule Contract with          -->
+<!-- IBM Corp.                                                        -->
+<!--                                                                  -->
+<!-- end_generated_IBM_copyright_prolog                               -->
+<!--                                                                  -->
+<!-- Licensed Materials - Property of IBM                             -->
+<!-- Copyright IBM Corp. 2011                                         -->
+<!-- US Government Users Restricted Rights - Use, duplication or      -->
+<!-- disclosure restricted by GSA ADP Schedule Contract with          -->
+<!-- IBM Corp.                                                        -->
+<!--                                                                  -->
+
+<functionModel
+       xmlns="http://www.ibm.com/xmlns/prod/streams/spl/function"
+       xmlns:cmn="http://www.ibm.com/xmlns/prod/streams/spl/common"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.ibm.com/xmlns/prod/streams/spl/function functionModel.xsd">
+  <functionSet>
+    <headerFileName>LMONBenchmarkHelpers.h</headerFileName>
+    <functions>
+      <function>
+        <description>Pin to a given Cpu</description>
+        <prototype><![CDATA[ stateful int32 pinToCpu(int32 cpu) ]]></prototype>
+      </function>
+      <function>
+        <description>Parse a log event</description>
+        <prototype><![CDATA[ <tuple T> stateful void parseEvent_Native(mutable T event, rstring text, int32 thisYear) ]]></prototype>
+      </function>
+      <function>
+        <description>Format a log event</description>
+        <prototype><![CDATA[ <tuple T> stateful void formatEvent_Native(mutable rstring text, T event) ]]></prototype>
+      </function>
+    </functions>
+    <dependencies>
+      <!-- This library can have several dependencies. We only use one here -->
+      <library>
+        <cmn:description>lmon.benchmark library</cmn:description>
+        <cmn:managedLibrary>
+          <cmn:command>libInfo.pl</cmn:command>
+        </cmn:managedLibrary>
+      </library>
+    </dependencies>
+  </functionSet>
+</functionModel>

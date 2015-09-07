@@ -1,0 +1,56 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <test-name> <num-event-sources>"
+    echo ""
+    echo "  - <test-name> : Name of the test, as in F_BAS_1, or ALL for cleaning all tests."
+echo "  - <num-event-sources> : Total no. of event sources. Must be a multiple of 4"
+    echo ""
+    echo "Clean a given test. Sample usage:"
+    echo "    $name F_BAS_1"
+}
+
+if [[ $# -eq 0 || $# -gt 3 || "x$1" == "x-h" ]]; then
+    usage;
+    exit 1;
+fi
+
+TEST_NAME=$1
+NUM_EVENT_SOURCES=$2
+if [ "x$TEST_NAME" == "xALL" ]; then
+    TEST_DIR=../Tests 
+else
+    ls -d ../Tests/*/$TEST_NAME >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "Cannot find test '$TEST_NAME'">/dev/stderr
+        exit 1
+    fi
+    TEST_DIR=$(find ../Tests -type d -name $TEST_NAME -not -path */output.*)
+    rm -f $TEST_DIR/Makefile
+    cp $TEST_DIR/../../Makefile.common $TEST_DIR/Makefile
+fi
+
+make -C $TEST_DIR clean MAKE_ARG_NUMSRC=$NUM_EVENT_SOURCES || exit 1

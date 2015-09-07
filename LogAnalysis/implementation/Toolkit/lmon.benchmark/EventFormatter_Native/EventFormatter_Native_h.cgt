@@ -1,0 +1,44 @@
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+/* Additional includes go here */
+#include <fstream>
+
+<%
+  use EventFormatterCommon;
+  EventFormatterCommon::verify($model);
+%>
+
+<%SPL::CodeGen::headerPrologue($model);%>
+
+class MY_OPERATOR : public MY_BASE_OPERATOR 
+{
+public:
+  // Constructor
+  MY_OPERATOR();
+
+  // Destructor
+  virtual ~MY_OPERATOR() {}
+
+  // Tuple procressing for non-mutating ports 
+  void process(Tuple const & tuple, uint32_t port);
+
+  // Punctuation procressing 
+  void process(Punctuation const & tuple, uint32_t port);
+    
+private:
+  // Members
+  std::ofstream out_;
+  char buffer_[2048];
+  std::map<std::string, std::string> tags_; 
+
+  Mutex mutex_;
+}; 
+
+<%SPL::CodeGen::headerEpilogue($model);%>
+

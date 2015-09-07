@@ -1,0 +1,122 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+
+function debug {
+  DBGFILE=${OUTDIR}.DEBUG
+  echo "LOCATION : $LOCATION" > $DBGFILE
+  echo "VMLINUX_PARM: $VMLINUX_PARM" >> $DBGFILE
+  echo "SAMPLEPERIOD_PARM:  $SAMPLEPERIOD_PARM" >> $DBGFILE
+  echo "OUTDIR:  $OUTDIR" >> $DBGFILE
+  echo "ADDITIONAL_FLAGS:  $ADDITIONAL_FLAGS" >> $DBGFILE
+  echo "CMD:  $CMD" >> $DBGFILE
+}
+
+MON_FILE_TEMPLATE=$1
+EXT=$(basename $MON_FILE_TEMPLATE)
+DIR=$(dirname $MON_FILE_TEMPLATE)
+DIR=$(readlink -f $DIR)
+OUTDIR=$DIR/profiling.operf.$(hostname).$EXT
+EXEC_DIR=$(dirname $0)
+
+LOCATIONDEFAULT=DEFAULT
+LOCATION=${OPERFPROFILE_LOCATION:-$LOCATIONDEFAULT}
+
+PROFILEDURATIONDEFAULT=120
+PROFILEDURATION=${OPERFPROFILE_DURATION:-$PROFILEDURATIONDEFAULT}
+
+SAMPLEPERIODDEFAULT=1000000
+SAMPLEPERIOD=${OPERFPROFILE_SAMPLEPERIOD:-$SAMPLEPERIODDEFAULT}
+
+VMLINUXDEFAULT=DEFAULT
+VMLINUX=${OPERFPROFILE_VMLINUX:-$VMLINUXDEFAULT}
+
+SUDO=
+if [ "$OPERFPROFILE_USE_SUDO" == "1" ] ; then
+  SUDO=sudo
+fi
+ADDITIONAL_FLAGS=$OPERFPROFILE_ADDITIONAL_FLAGS
+
+
+# LOCATION defaults to /opt/at7.0/bin/operf for ppc
+#          default to /usr/local/bin/operf otherwise
+ARCH=$(uname -i)
+if [ "DEFAULT" == "${LOCATION^^}" ] ; then
+  if [ "$ARCH" == "ppc64" ] ; then
+    LOCATION="/opt/at7.0/bin/operf"
+  else
+    LOCATION="/usr/local/bin/operf"
+  fi
+fi
+if [ ! -f "$LOCATION" ] ; then
+  echo "WARNING:  $LOCATION is not found.  Cannot profile!"
+  exit 1
+fi
+
+
+# If VMLINUX is "NONE" don't use the -k option
+# If VMLINUX is "DERIVED" use rpm to calculate the location
+if [ "NONE" == "${VMLINUX^^}" ] ; then
+  VMLINUX_PARM=
+elif [ "DERIVED" == "${VMLINUX^^}" ] ; then
+  VMLINUX_LOC=$(rpm -ql kernel-debuginfo | grep vmlinux)
+  if [ -n "$VMLINUX_LOC" ] ; then
+    VMLINUX_PARM="-k $VMLINUX_LOC"
+  else
+    VMLINUX_PARM=
+    echo "Unable to find location of vmlinux library"
+  fi
+else
+  if [ -f "$VMLINUX" ] ; then
+    VMLINUX_PARM="-k $VMLINUX"
+  else
+    VMLINUX_PARM=
+    echo "WARNING:  vmlinux library $VMLINUX does not exist."
+  fi
+fi
+
+if [[ "x$OPERFPROFILE_COUNTERSPEC"  != "x" ]]; then
+  $EXEC_DIR/logMsg "OPERFPROFILE_COUNTERSPEC=$OPERFPROFILE_COUNTERSPEC"
+  SAMPLEPERIOD_PARM="-e $OPERFPROFILE_COUNTERSPEC"
+else
+# If ARCH is ppc64 use PM_RUN_CYC_GRP1 for sampling period.
+# Else for intel use CPU_CLK_UNHALTED
+  if [ "$ARCH" == "ppc64" ] ; then
+    SAMPLEPERIOD_PARM="-e PM_RUN_CYC_GRP1:$SAMPLEPERIOD"
+  else
+    SAMPLEPERIOD_PARM="-e CPU_CLK_UNHALTED:$SAMPLEPERIOD"
+  fi
+fi
+
+
+rm -rf $OUTDIR
+mkdir -p $OUTDIR
+chmod 777 $OUTDIR
+CMD="$SUDO $LOCATION -s $VMLINUX_PARM $SAMPLEPERIOD_PARM -d $OUTDIR $ADDITIONAL_FLAGS"
+
+if [ "Y" == "$OPERFPROFILE_DEBUG" ] ; then
+  debug
+fi
+
+$EXEC_DIR/logMsg "Running operf: $CMD"
+$CMD >> /dev/null 2>&1 &
+PROFILE_PID=$!
+sleep $PROFILEDURATION
+$SUDO kill -SIGINT $PROFILE_PID
+sleep 2  # timing issue...
+if [ "$OPERFPROFILE_USE_SUDO" == "1" ] ; then
+  $SUDO chown -R $USER $OUTDIR
+fi
+$EXEC_DIR/logMsg "operf complete: $CMD"
+chmod -R 755 $OUTDIR

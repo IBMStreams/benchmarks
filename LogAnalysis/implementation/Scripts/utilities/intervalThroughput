@@ -1,0 +1,16 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# This script is used to log a message to the log file
+# It takes a single parameter, that being the string to be logged
+epoch_time=`head -n 1 $1/adjustedStats/A1.source-stats.1.-1 | awk '//{printf("%d",$2-30)}'`
+echo $epoch_time
+echo `date -d @$epoch_time +%D`
+echo `date -d @$epoch_time +%T`
+cat $1/rate.1.-1 | awk '//{print $2}'

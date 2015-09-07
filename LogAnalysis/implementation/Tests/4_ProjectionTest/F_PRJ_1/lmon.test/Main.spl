@@ -1,0 +1,72 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+composite OneChain
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;
+    type
+        static LogProjection = tuple<uint64 timeMillis, // posix time in millisecs
+                                     Event.Source sourceKind, // A or B
+                                     uint8 sourceIndex, // index, as in 16 in A16
+                                     Event.Kind eventKind, // Msg_Sent, Msg_Rcvd, Filler
+                                     uint64 eventId, // increments for each event
+                                     uint64 messageId, // increments for each message (Sent/Rcvd)
+                                     uint32 randomId>; // 8 digit random id
+    graph
+        stream<rstring event> Beat = FileSource() {
+            param
+                file : getSubmissionTimeValue("dataDir", "../../../../Data") + "/DataFiles/" +
+                       (rstring) $sourceKind + (rstring) $sourceIndex + "/input-data";
+                format : line;
+                parsing : fast;            
+        }
+
+        stream<Event.Log> Parsed = EventParser(Beat) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind); 
+        }
+
+        stream<LogProjection> Projected = Functor(Parsed) {}
+
+        () as Sink = EventFormatter_Native(Projected) {
+            param
+                file : (rstring) $sourceKind + (rstring) $sourceIndex + ".output-data";
+        }
+}
+
+composite Main 
+{
+  graph
+      () as Sink = CommonMain() {
+          param
+              nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+              core : lmon.test::OneChain;
+      }
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared); 
+}

@@ -1,0 +1,30 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+
+# Shortcut to initialize hosts file with one host (the current host
+# this script is running on)
+
+DIR=$(dirname $0)/..
+DIR=$(readlink -f $DIR)
+FILE=$DIR/hosts
+
+chmod +w $FILE
+HOST=`hostname`
+
+sed -i s/MYHOSTNAME/$HOST/ hosts
+
+echo "file $FILE:"
+cat $FILE
+

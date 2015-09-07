@@ -1,0 +1,3 @@
+#! /bin/bash
+DIR_NAME=$(dirname $0)
+$DIR_NAME/run_counters -i 1000 -t $1 -o $2

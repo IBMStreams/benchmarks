@@ -1,0 +1,148 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#
+# Licensed Materials - Property of IBM
+# Copyright IBM Corp. 2011
+# US Government Users Restricted Rights - Use, duplication or
+# disclosure restricted by GSA ADP Schedule Contract with
+# IBM Corp.
+#
+
+# This script is used to run all the performance tests consecutively.
+# For each test, the script runs the test starting with <min-event-sources>
+# no. of sources, and incrementing the no. of event sources, till the
+# throughput of the workload starts dropping on further incrementing the
+# no. of event sources.
+
+#Restart the instance
+LA_DO_SETUP_DEFAULT=1
+LA_DO_SETUP=${LA_DO_SETUP:-$LA_DO_SETUP_DEFAULT}
+if [ "x$LA_DO_SETUP" == "x1" ] ; then
+  ./instanceStop
+  ./instanceStart
+fi
+
+NODESDEFAULT=1
+NODES=${NUM_NODES:-$NODESDEFAULT}
+
+DIR=$(dirname $0)
+CPUSDEFAULT=-1
+CPUS=${CPUS:-$CPUSDEFAULT}
+
+
+if [ -z "$RESULTS_DIR" ] ; then
+  RESULTS_PARM=
+  data_dir_root=$DIR/../Results/Perf
+else
+  RESULTS_PARM="-d $RESULTS_DIR"
+  data_dir_root=$RESULTS_DIR/Perf
+fi
+
+
+MIN_NUMSOURCESDEFAULT=8
+MIN_NUMSOURCES=${MIN_NUMSOURCES:-$MIN_NUMSOURCESDEFAULT}
+
+# Calculate the total no. of threads in all the hosts
+# We will set this as a lower limit on the no. of event sources
+# upto which a test needs to run before
+# we check if the max. throughput is reached
+HOSTS=`cat $DIR/../Scripts/hosts | grep analytic | cut -f 1 -d " "`
+num_threads=0
+for host in $HOSTS; do
+    num_threads=$num_threads+`ssh $HOSTS 'cat /proc/cpuinfo | grep "^processor" | wc -l'`
+done
+
+TESTSALL="P_BAS_1 P_FLT_1 P_FLT_2 P_ENR_1 P_ENR_2 P_PRJ_1 P_AGG_1 P_AGG_2 P_AGG_3 P_AGG_4 P_STM_1 P_STM_2 P_SPT_1 P_COR_1 P_COR_2 P_COR_3 P_PTD_1 P_PTD_2 P_PTD_3 P_PTD_4"
+TESTS=${TESTS:-$TESTSALL}
+TESTS=($TESTS)
+
+
+# Run the performance tests -
+# For each test, start the test with $MIN_EVENT_SOURCES and
+# increment by 4 till max throughput is reached number.
+for test in "${TESTS[@]}"
+do 
+    # Verify if the test is valid
+    ls -d $DIR/../Tests/*/$test >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+	echo "Cannot find test '$test'">/dev/stderr
+	exit 1
+    fi
+
+    # directory where the perf data will be stored
+    data_dir=$data_dir_root/$test
+
+    # no. of event sources, initialized to $MIN_EVENT_SOURCES
+    sources=$MIN_NUMSOURCES
+
+    # maximum throughput (input rate)
+    maxRate=0
+    maxRateSources=0
+    lowerCount=4
+
+    # indication that probably max. throughput is reached.
+    flag=0
+
+    # Run the test 3 more times after max throughput is reached
+    # Increment $count by 1 after each run
+    count=0
+
+    while true
+    do
+      $DIR/internal/logMsg "$test with $sources event sources, $NODES node(s) and $CPUS CPU(s)"
+      ./testClean $test $sources
+      ./testBuild $test $sources $NODES $RESULTS_PARM -s $INITIAL_SETTLE_TIME
+
+      ./testRun $test $sources $NODES $CPUS $RESULTS_PARM
+
+      # Compute the total throughput of the current test
+      avgRate=`cat $data_dir/perf.$sources/perf.summary.$sources.$NODES.$CPUS | \
+          gawk -v lines=$((($sources/2)+4)) '/^Avg/{print $4}'`
+      currRate=$(($avgRate * $sources))
+      $DIR/internal/logMsg "$test: $currRate at $sources sources"
+
+      # update the max throughput if applicable
+      if [ $currRate -gt $maxRate ]; then
+	  $DIR/internal/logMsg "$test: new max rate = $currRate at $sources sources.  Previous max = $maxRate at $maxRateSources sources."
+	  maxRate=$currRate
+	  maxRateSources=$sources
+	  if [ $sources -gt $(($MAX_NUMSOURCES)) ]; then
+		flag=0
+		count=0
+		$DIR/internal/logMsg "Will run $test $lowerCount more times. Patience please!"
+	  fi
+      else
+	  if [ $sources -gt $MAX_NUMSOURCES ]; then
+		flag=1
+	  	count=$(($count + 1))
+	  	$DIR/internal/logMsg "$test: $currRate is below max throughput $count times at $sources sources.  Break at $lowerCount times.  Previous max = $maxRate at $maxRateSources sources"
+		if [ $count -ge $lowerCount ]; then
+		    $DIR/internal/logMsg "max throughput for $test reached.. breaking"
+		    break
+		fi
+	  fi
+      fi
+
+      sources=$(($sources+4))
+
+      sleep 60
+
+    done
+  done
+$DIR/internal/logMsg "autorunPerf complete.  output in $data_dir_root"
+internal/benchmarkNumber -d $data_dir_root -n $NUM_NODES -v
+$DIR/utilities/getLAfiles -d $data_dir_root -o $data_dir_root/Results -v
+$DIR/internal/logMsg "Processing complete on $data_dir_root"
+

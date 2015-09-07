@@ -1,0 +1,153 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# This script is used to build a test, for instance P_BAS_1
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <test-name> <num-event-sources> <num-nodes> [-d <out-perf-dir>] "
+    echo ""
+    echo "  - <test-name> : Name of the test, as in F_BAS_1, or ALL for building all tests."
+    echo "  - <num-event-sources> : Total no. of event sources. Must be a multiple of 4"
+    echo "     eg: num-event-sources = 40, generates 10 event sources for each pool P1, P2, P3, P4 "
+    echo " - <num-nodes> : Number of nodes to use."
+    echo "  - Optional [-d <out-perf-dir>] : Specify the location of the performance stats,"
+    echo "                                   such as throughput, latency, computed by the application"
+    echo "  - Optional [-s <settle-time>] : Time to let the workload settle before producing measurements"
+    echo "     By default, the location of the performance stats is LogAnalysisBenchmark/implementation/Results"
+    echo "     Note: The actual output of the application is different from performance stats"
+    echo ""
+    echo "Build a given test. Sample usage:"
+    echo "    $name F_BAS_1 40 [-d /home/<USER>/]"
+}
+
+# If invalid number of arguments are entered, exit
+if [[ $# -le 1 || $# -gt 7 || "x$1" == "x-h" || "x$2" == "x-h" ]]; then
+    usage;
+    exit 1;
+fi
+
+# No. of event sources specified by user must be a positive non zero integer 
+# and a multiple of 4
+if [[ "x$2" == "x"*[!0-9]* || "x$2" == "x" || "x$2" == "x0" || $(expr $2 % 4) -ne 0 ]]; then
+    echo "No. of event sources must be a positive non-zero integer and a multiple of 4";
+    echo "";
+    usage;
+    exit 1;
+fi
+
+# Verify that the number of nodes entered is a positive non-zero integer
+if [[ "x$3" == "x"*[!0-9]* || "x$3" == "x0" || "x$3" == "x" ]]; then
+    echo "No. of nodes must be a positive non-zero integer ";
+    echo "";
+    usage;
+    exit 1;
+fi
+
+
+# Name of the test, eg: P_BAS_1
+# Value "ALL" is used to build all available tests
+TEST_NAME=$1
+
+# no. of datasources used in the test
+NUM_EVENT_SOURCES=$2
+
+# no of nodes to use
+NUM_NODES=$3
+
+# default SETTLE_TIME
+SETTLE_TIME=0
+
+# if optional argument [-d <out-dir>] is used
+if [[ $# -gt 3 ]]; then
+    shift; shift; shift;
+
+    # valid_opt_found is set to 1 if the argument "-d" is found by getopt 
+    valid_opt_found=0
+    while getopts :d:s: opt 
+    do
+	case $opt in
+	    d ) OUT_PERF_DIR=$(readlink -f $OPTARG)/Perf/$TEST_NAME/perf.$NUM_EVENT_SOURCES; 
+		echo The output performance stats will be saved in $OUT_PERF_DIR;
+		valid_opt_found=1;;
+#		break;;
+	    s ) SETTLE_TIME=$OPTARG; 
+		echo Settle time is $SETTLE_TIME;
+		valid_opt_found=1;;
+#		break;;
+	    \? ) echo "Invalid option: -$OPTARG" >&2;
+		exit 1;;
+	    -- ) shift; break;;
+	    -* ) echo usage; exit 1;;
+	    : ) echo "Option -$OPTARG requires an argument." >&2;
+		usage;
+		exit 1;;
+	esac
+    done
+    if [[ "x$valid_opt_found" == "x0" ]]; then
+	usage;
+	exit 1;
+    fi
+fi
+
+# Directory location of script "testBuild" 
+DIR=$(dirname $0)
+
+# Set a default value for output performance directory
+: ${OUT_PERF_DIR=$(readlink -f $DIR/../Results)/Perf/$TEST_NAME/perf.$NUM_EVENT_SOURCES}
+
+#Create the output directory if it does not exist
+if [[ ! -d $OUT_PERF_DIR ]]; then
+    echo "Directory $OUT_PERF_DIR does not exist! Creating it .."
+    mkdir -p $OUT_PERF_DIR
+    if [[ ! -d $OUT_PERF_DIR ]]; then
+        echo Unable to create ${OUT_PERF_DIR}. Exiting ..
+        exit 1
+    fi
+fi
+
+# Choose the location of the Makefile depending on 
+# whether all or individual tests are required to be built
+if [ "x$TEST_NAME" == "xALL" ]; then
+    TEST_DIR=$DIR/../Tests 
+else # Build individual test
+    ls -d $DIR/../Tests/*/$TEST_NAME >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "Cannot find test '$TEST_NAME'">/dev/stderr
+        exit 1
+    fi
+    TEST_DIR=$(find ../Tests -type d -name $TEST_NAME -not -path */output.*)
+    rm -f $TEST_DIR/Makefile
+    cp $TEST_DIR/../../Makefile.common $TEST_DIR/Makefile
+fi
+
+if [ "x$PINNUMA" == "x1" ] ; then
+  EXTRA_SCFLAGS="-x-DPINNUMA=1"
+else
+  EXTRA_SCFLAGS=
+fi
+
+
+# Build the test $TEST_NAME
+make -C $TEST_DIR MAKE_ARG_NUMSRC=$NUM_EVENT_SOURCES MAKE_ARG_OUTPERFDIR=$OUT_PERF_DIR MAKE_NUM_NODES=$NUM_NODES MAKE_SETTLE_TIME=$SETTLE_TIME MAKE_EXTRA_SCFLAGS=$EXTRA_SCFLAGS || exit 1
+

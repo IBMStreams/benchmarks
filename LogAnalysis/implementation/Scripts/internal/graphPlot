@@ -1,0 +1,188 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# This script will generate all the required graphs for all tests
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <test-name> <num-nodes> [<num-cpus>] [-d <data-dir>]"
+    echo ""
+    echo "  - <test-name> : Name of the test for which graphs are to be generated." 
+    echo "    'ALL' for all the tests. Specific names eg P_BAS_1 for a specific test "
+    echo "  - <num-nodes> : Number of nodes to use."
+    echo "  - Optional [<num-cpus>] : No. of CPUs to use on each node" 
+    echo "     Default value=-1, in which case all available CPUs are used."
+    echo "  - Optional [-d <data-dir>] : Root directory under which "
+         "     raw data of all test is stored"
+    echo "     e.g <current_dir>/../../Results/Perf is a default location"
+    echo "     Graphs will be generated under the same root directory"
+    echo "     By default, the graphs will be generated in <current_dir>/../../Results/Perf/Graphs"
+    echo ""
+    echo "Generate graphs for all or a single test(s). Sample usage:"
+    echo "    $name ALL 1 -1"
+}
+
+# get the user-specified location where graph is to be stored
+# Optional parameter "-d <out-graph-dir>" is used to specify this location
+function set_dir_of_outperf
+{
+    # opt_d_found is set to 1 if the argument "-d" is found by getopt
+    opt_d_found=0
+    while getopts :d: opt 
+    do
+	case $opt in
+	        d ) DATA_DIR=$(readlink -f $OPTARG); 
+		echo The graphs will be saved in $DATA_DIR/Graphs;
+		opt_d_found=1;
+		break;;
+	        \? ) echo "Invalid option: -$OPTARG" >&2;
+		exit 1;;
+	        -- ) shift; break;;
+	        -* ) echo usage; exit 1;;
+	        : ) echo "Option -$OPTARG requires an argument." >&2;
+		usage;
+		exit 1;;
+	esac
+    done
+    if [[ "x$opt_d_found" == "x0" ]]; then
+	usage;
+	exit 1;
+    fi
+}
+
+# if invalid number of arguments are entered, exit
+if [[ $# -lt 2 || $# -gt 5 ]]; then
+    usage;
+    exit 1;
+fi
+
+# Generate graphs ALL tests or a specific test
+TESTS=$1
+
+# Verify that the number of nodes entered is a positive non-zero integer
+NUM_NODES=$2
+if [[ "x$2" == "x"*[!0-9]* || "x$2" == "x0" || "x$2" == "x" ]]; then
+    echo "No. of nodes must be a positive non-zero integer ";
+    echo "";
+    usage;
+    exit 1;
+fi
+
+# If there are 3 or 5 arguments, then the 3rd argument has to represent no. of CPUs
+# Verify that the number of CPUs entered is an integer.
+NUM_CPUS=-1
+isInt='^-?[0-9]+$'
+if [[ $# -eq 3 || $# -eq 5 ]] ; then
+    if [[ $3 =~ $isInt ]] ; then
+	NUM_CPUS=$3
+    else
+	echo "Not a valid argument"
+	usage
+	exit 1
+    fi
+fi
+
+# If there are 4 arguments, the 3rd argument has to be "-d" 
+# followed by user-specified graph directory as the 4th argument 
+if [[ $# -eq 4 ]]; then
+    # shift args 2 position to the left so that the 3rd argument becomes the 1st
+    shift; shift;
+    set_dir_of_outperf $1 $2
+fi
+
+# If there are 5 arguments, then 4th must be "-d" 
+# followed by user-specified graph directory as the 5th argument
+if [[ $# -eq 5 ]]; then
+    # shift args 3 positions to the left so that the 4th argument becomes the 1st
+    shift; shift; shift;
+    set_dir_of_outperf $1 $2
+fi
+
+# Set a default value for the graph directory
+DIR=$(dirname $0)
+: ${DATA_DIR=$(readlink -f $DIR/../../Results/Perf)}
+
+# resets to 0 if at least perf data of one test directory is found in DATA_DIR
+ifNoPerf=1
+if [[ "x$TESTS" == "xALL" ]]; then
+    TESTSALL=('P_BAS_1' 'P_FLT_1' 'P_FLT_2' 'P_ENR_1' 'P_ENR_2' 'P_PRJ_1' 'P_AGG_1' 'P_AGG_2' 'P_AGG_3' 'P_AGG_4' 'P_STM_1' 'P_STM_2' 'P_SPT_1' 'P_COR_1' 'P_COR_2' 'P_COR_3' 'P_PTD_1' 'P_PTD_2' 'P_PTD_3' 'P_PTD_4')
+    for test in "${TESTSALL[@]}"
+    do
+	# Check if test directory is present in DATA_DIR
+	ls -d $DATA_DIR/$test >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+	    echo "Cannot find test '$test' directory">/dev/stderr
+	else
+	    # Check if perf directories are present in the corr. test directories
+	    ls -d $DATA_DIR/$test/perf.* >/dev/null 2>&1
+	    if [ $? -ne 0 ]; then
+		echo "Cannot find perf data for '$test'">/dev/stderr
+	    else
+		ifNoPerf=0
+	    fi
+	fi
+    done
+
+    # if no perf data was found for any test, then exit
+    if [[ "x$ifNoPerf" == "x1" ]]; then
+        echo "Error! <test-name>/perf.<#sources> not found in $DATA_DIR"
+	exit 1
+    fi
+else
+    # Check if test directory is present in DATA_DIR
+    ls -d $DATA_DIR/$TESTS >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "Cannot find test '$TESTS' directory">/dev/stderr
+    else
+        # Check if perf directories are present in the corr. test directories
+        ls -d $DATA_DIR/$TESTS/perf.* >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "Cannot find perf data for '$TESTS'">/dev/stderr
+	    echo "Error! <test-name>/perf.<#sources> not found in $DATA_DIR"
+	    exit 1
+        fi
+    fi
+fi
+
+# Create the directory where graphs will be saved 
+GRAPH_DIR=$DATA_DIR/Graphs
+mkdir -p $GRAPH_DIR
+echo "All graphs will be generated in $DATA_DIR/graphs"
+
+
+# Plot throughput against no. of event sources for all the tests
+# Generates a single graph
+echo "Plotting throughput against no. of event sources for $TESTS test(s), $NUM_NODES node(s), $NUM_CPUS cpu(s)"
+$DIR/ThroughputvsSourcesPlot $TESTS $NUM_NODES $NUM_CPUS $DATA_DIR 
+echo "done plotting throughput against no. of event sources"
+
+# Plot throughput against time
+# Generates one graph for each test
+echo "Plotting throughput against time for $TESTS test(s), $NUM_NODES node(s), $NUM_CPUS cpu(s)"
+$DIR/TotalThroughputvsTimePlot $TESTS $NUM_NODES $NUM_CPUS $DATA_DIR
+echo "done plotting throughput against time"
+
+# Plot CPU utilization against time
+# Generates one graph for each test
+echo "Plotting CPU utilization and memory utilization against time for $TESTS test(s), $NUM_NODES node(s), $NUM_CPUS cpu(s)"
+$DIR/cpu-memvsTimePerHostPerTestPlot $TESTS $NUM_NODES $NUM_CPUS $DATA_DIR
+echo "done plotting CPU utilization and memory utilization against time"
+
+# Plot CPU utilization against no. of event sources
+# Generates a single graph
+echo "Plotting CPU utilization against no. of sources for $TESTS test(s), $NUM_NODES node(s), $NUM_CPUS cpu(s)"
+$DIR/cpuvsSourcePlot $TESTS $NUM_NODES $NUM_CPUS $DATA_DIR
+echo "done plotting CPU utilization against no. of sources"
+
+# Plot memory utilization against no. of event sources
+# Generates a single graph
+echo "Plotting memory utilization against no. of sources for $TESTS test(s), $NUM_NODES node(s), $NUM_CPUS cpu(s)"
+$DIR/memoryvsSourcePlot $TESTS $NUM_NODES $NUM_CPUS $DATA_DIR
+echo "done plotting memory utilization against no. of sources"

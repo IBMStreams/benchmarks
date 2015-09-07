@@ -1,0 +1,96 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+DATA_DIR=$(dirname $0)/data
+
+function generateOutputFile
+{
+    idx=$1
+    pool=$((3+($idx-1)/10))
+
+    higherIdx=$(($idx*100000+49999))
+    lowerIdx=$(($idx*100000))
+    latency=$((4*$idx))
+    for (( i=$higherIdx; i>=$lowerIdx; i-- )); do
+        echo "{poolIndex=$pool,deviceId=$i,timeDelta=0,messageLatency=$latency}"
+        latency=$(($latency+4*$idx))
+        if [ $(($i % 10)) -eq 0  ]; then
+            latency=$(($latency+2*$idx)) # filler
+        fi
+    done
+
+    delta=$(($idx*210000))
+    higherIdx=$(($idx*100000+99999))
+    lowerIdx=$(($idx*100000+50000))
+    latency=$((4*$idx))
+    for (( i=$higherIdx; i>=$lowerIdx; i-- )); do
+        echo "{poolIndex=$pool,deviceId=$i,timeDelta=$delta,messageLatency=$latency}"
+        latency=$(($latency+4*$idx))
+        if [ $(($i % 10)) -eq 0  ]; then
+            latency=$(($latency+2*$idx)) # filler
+        fi
+    done
+    higherIdx=$(($idx*100000+49999))
+    lowerIdx=$(($idx*100000))
+    latency=$((4*$idx))
+    for (( i=$higherIdx; i>=$lowerIdx; i-- )); do
+        echo "{poolIndex=$pool,deviceId=$i,timeDelta=$delta,messageLatency=$latency}"
+        latency=$(($latency+4*$idx))
+        if [ $(($i % 10)) -eq 0  ]; then
+            latency=$(($latency+2*$idx)) # filler
+        fi
+    done
+}
+
+function checkOutputFile
+{
+    idx=$1
+    file=$DATA_DIR/B$idx.output-data
+    diff <(sort $file) <(generateOutputFile $idx | sort)
+    if [ $? -ne 0 ]; then
+        exit 1;
+    fi
+}
+
+function checkSummaryFile
+{
+    idx=$1
+    file=$DATA_DIR/B$idx.summary
+    pool=$((3+($idx-1)/10))
+    delta=$(($idx*210000))      
+    latency=$(($delta/2+$idx))
+    res="{poolIndex=$pool,sourceIndex=$idx,minTimeDelta=$delta,avgMessageLatency=$latency}"
+    echo $res | diff $file - 
+    if [ $? -ne 0 ]; then
+        exit 1;
+    fi
+}
+
+for (( i=1; i<=20; i++ )); do
+    checkOutputFile $i  
+    if [ $? -ne 0 ]; then
+        exit 1;
+    fi
+done
+
+for (( i=1; i<=20; i++ )); do
+    checkSummaryFile $i  
+    if [ $? -ne 0 ]; then
+        exit 1;
+    fi
+done
+
+file=$DATA_DIR/pool.min-delta
+echo "{poolIndex=3,minTimeDelta=210000}" | diff $file -
+if [ $? -ne 0 ]; then
+   exit 1;
+fi
+
+

@@ -1,0 +1,218 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+
+/*
+ * This composite defines the event log format, Event.Log
+ */
+public composite Event
+{
+    type 
+        static Source = enum {A, B};
+        static Kind = enum {Msg_Sent, Msg_Rcvd, Filler};
+        static Log = tuple<uint64 timeMillis, // posix time in millisecs
+                           Source sourceKind, // A or B
+                           uint8 sourceIndex, // index, as in 16 in A16
+                           Kind eventKind, // Msg_Sent, Msg_Rcvd, Filler
+                           uint64 eventId, // increments for each event
+                           uint32 deviceId, // rotates (different rules for A, B)
+                           uint64 messageId, // increments for each message (Sent/Rcvd)
+                           uint32 randomId>; // 8 digit random id
+        static EnrichedLog = Log, tuple<rstring customerName>; // customer name
+        static TimestampedLog = Log, tuple<int64 timeStamp>;
+        static EnrichedTimestampedLog = TimestampedLog, tuple<rstring customerName>;
+} 
+
+/* This composite operator formats events 
+ * @input In port that consumes the tuples to be formatted
+ * @output Out port that produces the formatted tuples
+ */
+public composite EventFormatter(input In; output Out) 
+{
+    param
+        expression<boolean> $native : true;
+    graph
+        stream<rstring event> Out = Custom(In as I)
+        {
+            logic 
+                state : {
+                    mutable tuple<rstring event> res = { event = "" };                
+                    mutable Sys.tm tm = {};
+                }
+                onTuple I: {
+                    if($native) {
+                        formatEvent_Native(res.event, I);
+                    } else {
+                        timestamp ts = timeMillisToTimestamp(I.timeMillis);
+                        gmtime(ts, tm);
+                        res.event = strftime(tm, "%m/%d %H:%M:%S.")+(rstring)(I.timeMillis%1000ul);
+                        res.event += " "+(rstring)I.sourceKind+(rstring)I.sourceIndex+" : ";                    
+                        res.event += "EVENT="+(rstring)I.eventKind;
+                        if (I.eventKind != Event.Filler) {
+                            res.event += ", ";
+                            res.event += "E_ID="+(rstring)I.eventId+", ";
+                            res.event += "D_ID="+(rstring)I.deviceId+", ";
+                            res.event += "M_ID="+(rstring)I.messageId+", ";
+                            res.event += "R="+(rstring)I.randomId;
+                        }    
+                    }
+                    submit(res, Out);
+                }
+        }
+}
+
+timestamp timeMillisToTimestamp(uint64 timeMillis)
+{
+    timestamp ts = createTimestamp(
+        (int64)(timeMillis/1000ul), // milliseconds to seconds
+        (uint32)(1000000ul*(timeMillis%1000ul))); // milliseconds to nanoseconds 
+    return ts;
+}
+
+uint64 timestampToTimeMillis(timestamp ts)
+{
+    return ((uint64) getSeconds(ts)*1000ul) +  // seconds to milliseconds
+           (uint64) (getNanoseconds(ts)/1000000u); // nanoseconds to milliseconds
+}
+
+/* This composite operator parses events 
+ * @input In port that consumes the tuples to be parsed
+ * @output Out port that produces the parsed tuples
+ */
+public composite EventParser(input stream<rstring event> In;
+                             output stream<Event.Log> Out) 
+{
+    param
+        expression<boolean> $native : true;
+        expression<int32> $cpu : -1;
+    graph
+        stream<Event.Log> Out = Custom(In as I)
+        {
+            logic 
+                state : {
+                    mutable boolean first = true;
+                    int32 thisYear = year(getTimestamp());
+                    mutable Sys.tm tm = {};
+                    mutable Event.Log res = {};
+                }
+                onTuple I: {
+                    if(first) {
+                        pinToCpu($cpu);
+                        first = false;                        
+                    }
+                    if($native) {
+                        parseEvent_Native(res, I.event, thisYear);
+                    } else {
+                        parseEvent(res, I.event, tm, thisYear);
+                    }
+                    submit(res, Out);
+                }
+        }
+}
+
+/* This composite operator parses events. It also timestamps the event before
+ *  parsing.
+ * @input In port that consumes the tuples to be parsed
+ * @output Out port that produces the parsed tuples
+ */
+public composite EventParserPerf(input stream<rstring event> In;
+                                 output stream<Event.TimestampedLog> Out) 
+{
+    param
+        expression<int32> $cpu : -1;
+	expression<int32> $num_cpus : 8;
+    graph
+        stream<Event.TimestampedLog> Out = Custom(In as I)
+        {
+            logic 
+                state : {
+                    mutable boolean first = true;
+                    int32 thisYear = year(getTimestamp());
+                    mutable Event.TimestampedLog res = {};
+                }
+                onTuple I: {
+                    if(first) {
+                        pinToCpu($cpu);
+                        first = false;                        
+                    }
+                    res.timeStamp = getCPUCounterInNanoSeconds();
+                    parseEvent_Native(res, I.event, thisYear);
+                    submit(res, Out);
+                }
+        }
+}
+
+void parseEvent(mutable Event.Log res, rstring event, mutable Sys.tm tm, int32 thisYear)
+{
+    // 10/26 03:04:21.036 B1 : EVENT=Msg_Rcvd, E_ID=9, D_ID=D1, M_ID=M1, R=78943513
+    mutable rstring token = "";
+    mutable int32 n = 0, m = 0;
+    
+    mutable uint32 p = 0;
+    strptime(event, "%m/%d %H:%M:%S.", tm, p);
+    tm.year = thisYear;
+    tm.zone = "UTC";
+    n = (int32) p;
+    m = findFirst(event, " ", n);
+    token = substring(event, n, m-n);
+    uint32 msecs = token;
+    timestamp ts = toTimestamp(tm);
+    res.timeMillis=timestampToTimeMillis(ts) + (uint64) msecs;
+    
+    n = m + 1;
+    token = substring(event, n, 1);
+    res.sourceKind = (Event.Source) token;
+    
+    n += 1;
+    m = findFirst(event, " ", n);
+    token = substring(event, n, m-n);
+    res.sourceIndex = (uint8) token;
+    
+    n = m + 9;
+    m = findFirst(event, ",", n);
+    if(m==-1) 
+        m = length(event);
+    token = substring(event, n, m-n);
+    res.eventKind = (Event.Kind) token;
+    
+    if(res.eventKind != Event.Filler) {
+        n = m + 7;
+        m = findFirst(event, ",", n);
+        token = substring(event, n, m-n);
+        res.eventId = (uint64) token;
+        
+        n = m + 7;
+        m = findFirst(event, ",", n);
+        token = substring(event, n, m-n);
+        res.deviceId = (uint32) token;
+        
+        n = m + 7;
+        m = findFirst(event, ",", n);
+        token = substring(event, n, m-n);
+        res.messageId = (uint64) token;
+        
+        n = m+4;
+        token = substring(event, n, length(event)-n);
+        res.randomId = (uint32) token;
+    }                      
+}
+

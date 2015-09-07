@@ -1,0 +1,105 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+<%
+my $testDir = $ARGV[0];
+my $outDir = $ARGV[1];
+%>
+
+composite OneChain
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;
+    graph
+
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+(rstring)$sourceKind;
+                format : line;
+        }
+/*
+        stream<rstring event> Sourced = FileSource() {
+            param
+                file : "/home/socc01/Data.200/" +
+                       (rstring) $sourceKind + (rstring) $sourceIndex + "/input-data";
+                format : line;
+                parsing : fast;
+
+        }
+*/
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind);
+                // cpu :  -1;
+        }
+
+        stream<Event.TimestampedLog> Counted1 = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : (rstring) $sourceKind + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        stream<uint32 rMax> Aggregated = Custom(Counted1) {
+            logic
+                state : { 
+                    mutable tuple<uint32 rMax> res = { rMax = 0u };
+                }
+                onTuple Counted1: {
+                    if(res.rMax < randomId)
+                        res.rMax = randomId;
+                    submit(res, Aggregated);
+                }
+        }
+
+        stream<rstring time, uint32 rMax> Sampled = TimedSampler(Aggregated) {
+            param 
+                period: 30.0; // every 30 secs
+        }
+
+        () as Sink = FileSink(Sampled) {
+            param
+                file : "<%=$outDir%>/" + (rstring) $sourceKind + (rstring) $sourceIndex + ".summary";
+                format : txt;
+                flush : 1u;
+        }
+}
+
+composite Main 
+{
+  graph
+      () as Sink = CommonMain() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                core: lmon.test::OneChain; 
+                workload : lmon.benchmark::CommonWorkload;
+      }
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared);
+}
+

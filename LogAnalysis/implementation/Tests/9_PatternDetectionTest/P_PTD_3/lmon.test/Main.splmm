@@ -1,0 +1,127 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+<%
+my $testDir = $ARGV[0];
+my $outDir = $ARGV[1];
+%>
+
+composite OneChainA(output stream<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+"A";
+                format : line;        
+        }        
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, Event.A); 
+        }
+
+        stream<Event.TimestampedLog> Counted = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : "A" + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        stream<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId> Out = Functor(Counted) {
+            param
+                filter: eventKind != Event.Filler;
+        } 
+}
+
+composite OneChainB(input stream<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId> InA)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Sourced = TCPSource() {
+            param
+                role : server;
+                name : "workload."+(rstring)$sourceIndex+"B";
+                format : line;        
+        }        
+
+        stream<Event.TimestampedLog> Parsed = EventParserPerf(Sourced) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, Event.B); 
+        }
+
+        stream<Event.TimestampedLog> Counted = EventCounterPerf(Parsed) {
+            param
+                nCPUs : $nCPUs;
+                file : "B" + (rstring) $sourceIndex + ".source-stats";
+                period : 30u;
+        }
+
+        stream<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId> InB = Functor(Counted) {
+            param
+                filter: eventKind != Event.Filler;
+        } 
+
+        (stream<uint64 messageId, boolean ordered, boolean complete> Detected;
+         stream<uint64 numComplete, uint64 numIncomplete, uint64 numOrdered, uint64 numUnordered, 
+                uint64 numIncompleteFromBothEventSources, list<uint64>[4] numMissingEvents> Summarized)
+        = OrderAndCompletenessDetector(InA; InB) {
+            param
+                sourceIndex : $sourceIndex;
+                period : 30u;
+        }        
+
+        stream<rstring time, uint64 numComplete, uint64 numIncomplete, list<uint64>[4] numMissingEvents> SummarizedFinal = Functor(Summarized) 
+            { output SummarizedFinal : time = getTimeString(); }
+
+        () as Sink = FileSink(SummarizedFinal) {
+            param
+                file : "<%=$outDir%>/" + "AB" + (rstring)$sourceIndex + ".summary";
+                format : txt;
+                flush : 1u;
+        }  
+} 
+
+composite Main 
+{
+  graph
+      () as Sink1 = CommonMainWithBSidedMergedChains() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                chainCoreA : lmon.test::OneChainA; 
+                chainCoreB : lmon.test::OneChainB; 
+                coreAOutputType : tuple<uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId>;
+                workload : lmon.benchmark::CommonWorkload;
+      }
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared);
+}
+

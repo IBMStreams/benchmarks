@@ -1,0 +1,37 @@
+#!/bin/bash
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+
+DATA_DIR=$(dirname $0)/data
+BASE_DATA_DIR=$DATA_DIR/../../../../Data/DataFiles
+
+function generateOutputFile
+{
+    idx=$1
+    for (( i=0; i<200000; i++ )); do
+        echo "{messageId=$i,ordered=false}"
+    done
+}
+
+function checkFile
+{
+
+    idx=$1
+    ofile=$DATA_DIR/"AB"$idx.output-data
+    diff $ofile <(generateOutputFile $idx) || exit 1
+}
+
+# Check the files
+for (( i=1; i<=20; i++ )); do
+    checkFile $i
+    if [ $? -ne 0 ]; then
+        exit 1;
+    fi
+done
+

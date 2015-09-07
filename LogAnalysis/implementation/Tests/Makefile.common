@@ -1,0 +1,37 @@
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+.PHONY: all toolkit
+
+NUM_EVENT_SOURCES=$(MAKE_ARG_NUMSRC)
+OUT_PERF_DIR=$(MAKE_ARG_OUTPERFDIR)
+NUM_NODES=$(MAKE_NUM_NODES)
+SETTLE_TIME=$(MAKE_SETTLE_TIME)
+EXTRA_SCFLAGS=$(MAKE_EXTRA_SCFLAGS)
+
+LMON_TK = ../../../Toolkit
+
+SPLC = $(STREAMS_INSTALL)/bin/sc
+SPLC_FLAGS = -a -t $(LMON_TK) --output-directory=output.$(NUM_EVENT_SOURCES) $(EXTRA_SCFLAGS)
+EXTRA_FLAGS=$(CURDIR) $(OUT_PERF_DIR)
+
+SPL_CMD_ARGS ?= 
+SPL_MAIN_COMPOSITE = lmon.test::Main
+
+all: toolkit
+	$(SPLC) $(SPLC_FLAGS) -M $(SPL_MAIN_COMPOSITE) $(SPL_CMD_ARGS) $(EXTRA_FLAGS) nNodes=$(NUM_NODES)
+	cp -f output.$(NUM_EVENT_SOURCES)/lmon.test.Main.adl output.$(NUM_EVENT_SOURCES)/lmon.test.Main.$(NUM_NODES).adl 
+	cp -f output.$(NUM_EVENT_SOURCES)/lmon.test.Main.sab output.$(NUM_EVENT_SOURCES)/lmon.test.Main.$(NUM_NODES).sab 
+
+clean: 
+	$(SPLC) $(SPLC_FLAGS) -C -M $(SPL_MAIN_COMPOSITE) $(SPL_CMD_ARGS)
+	rm -fr output.$(NUM_EVENT_SOURCES)
+	rm -fr data
+
+toolkit:
+	make -C $(LMON_TK) TK_MAKE_ARG_NUMSRC=$(NUM_EVENT_SOURCES) TK_MAKE_ARG_OUTPERFDIR=$(OUT_PERF_DIR) TK_MAKE_ARG_SETTLE_TIME=$(SETTLE_TIME)

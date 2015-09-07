@@ -1,0 +1,246 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2015    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+use spl.file::*;
+
+/* This composite operator computes average througput and latency on the input
+ * stream and writes periodic updates to a file. 
+ * @input In port that consumes the tuples. The tuples must contain a timeStamp
+ * attribtue of type int64.
+ * @output Out port that produces the tuples, unchanged, if forwarding is requested
+ * @param nCPUs number of cpus to use (used for prefixing output file)
+ * @param file name of the output file
+ * @param forward whether to forward tuples to the output or not (true by default)
+ */
+
+<%
+my $perfDir = $ARGV[1];
+my $settleTime = $ARGV[2];
+%>
+
+public composite EventCounterPerf(input In; output Out) 
+{
+    param
+        expression<int32> $nCPUs;
+        expression<rstring> $file;
+        expression<uint32> $period;
+        expression<boolean> $forward : true; 
+    graph
+        stream<In> Out = Custom(In) {
+            logic
+                state: {
+                    mutable uint64 numEvents = 0ul;
+                    mutable uint64 lastNumEvents = 0ul;
+                    mutable uint64 numSamples = 0ul;
+		    mutable uint64 numNegativeSamples = 0ul;
+                    mutable int64 latencySum = 0l;
+		    mutable int64 latencyMax = 0l;
+                    mutable boolean first = true;
+                    mutable boolean settled = false;
+                    mutable int64 nextSeconds = 0l;
+                    mutable int64 lastTime = 0l;
+                    mutable uint64 fd = 0ul;
+                    int64 numNanosecsInSec = 1000l * 1000l * 1000l;
+                    int64 period = (int64) $period;
+		    int64 settleTime = (int64) <%=$settleTime%>; 
+                }
+                onTuple In: { 
+                    numEvents++;
+                    if (first) {        
+			timestamp ts = getTimestamp();
+			int64 tsSeconds = getSeconds(ts);
+			nextSeconds = ((tsSeconds+settleTime)/period+(int64)1)*period;
+			lastTime=nextSeconds;
+			println("first tuple with timeStamp "+(rstring)timeStamp+" CPU counter "+(rstring)getCPUCounterInNanoSeconds()+" Epoch seconds "+(rstring)tsSeconds+" Epoch Nanos "+(rstring)getNanoseconds(ts));
+                        first = false;
+                    }
+                    if($forward) {
+                        submit(In, Out);
+                    }
+                    if(numEvents % 128ul == 0ul) { // sample for latency
+			int64 currentTS = getCPUCounterInNanoSeconds();
+			if (currentTS > timeStamp) {
+			    int64 latency = currentTS - (int64) timeStamp;
+                            latencySum += latency;
+			    if (latency > latencyMax) {
+			        latencyMax = latency;
+			    }
+                            numSamples++;
+			}
+			else {
+			    numNegativeSamples++;
+			}
+                    }
+                    if ((numEvents % (uint64)512) == (uint64)0) {
+			timestamp ts = getTimestamp();
+			int64 currentSeconds = getSeconds(ts);
+			uint32 currentNanos = getNanoseconds(ts);
+			if  (currentSeconds>=nextSeconds) {
+			    if (settled) {
+			        int64 eventCount = numEvents-lastNumEvents;
+                                float64 rate = (float64)(eventCount) / 
+                                    ((float64)period);
+                                outputPerfStatsToFile(fd, rate, latencySum, numSamples,  eventCount, latencyMax, currentSeconds-nextSeconds, currentNanos);
+			    }
+		  	    else {
+                                mutable int32 err = 0;
+                                fd = fopen("<%=$perfDir%>/"+$file+
+                                       "."+getCompileTimeValue("nNodes")+
+                                       "."+(rstring)$nCPUs, "w", err);
+                                assert(err==0);
+	                        int64 openTime = getCPUCounterInNanoSeconds();
+			        println("opened " + $file + " openTime:  " + (rstring)openTime+" with tuple time "+(rstring)timeStamp+" Seconds "+(rstring)currentSeconds+" nanos "+(rstring)currentNanos);
+			        settled = true;
+			    }
+                            while(nextSeconds<=currentSeconds) {
+                                nextSeconds += period;
+			        println("nextSeconds "+(rstring)nextSeconds);
+			    } 
+			    println("tuple timeStamp "+(rstring)timeStamp+
+				    " lastTime "+(rstring)lastTime+
+				    " currentSeconds "+(rstring)currentSeconds+
+				    " lastNumEvents "+(rstring)lastNumEvents+
+				    " numEvents "+(rstring)numEvents+
+				    " latencySum "+(rstring)latencySum+
+				    " numSamples "+(rstring)numSamples+
+				    " numNegativeSamples "+(rstring)numNegativeSamples+
+				    " latencyMax "+(rstring)latencyMax);
+                            numSamples = 0ul;
+                            numNegativeSamples = 0ul;
+                            latencySum = 0l;
+                            latencyMax = 0l;
+                            lastTime = currentSeconds;
+                            lastNumEvents = numEvents;
+			}
+                    }
+                }
+        }    
+}
+
+public stateful void outputPerfStatsToFile(uint64 fd, float64 rate, int64 latency, uint64 numSamples, int64 eventCount, int64 maxLatency, int64 secondsOvershoot, uint32 nanosOvershoot)
+{
+    mutable int32 err = 0;
+    fwriteString("Time: "+getTimeStringAdjusted()+", ", fd, err);
+    assert(err==0);
+    fwriteString("Rate(tuples/sec): "+(rstring)rate+", ", fd, err);
+    assert(err==0);                        
+    fwriteString("Latency(nanosecs): "+(rstring)latency+", ", fd, err);
+    assert(err==0);                        
+    fwriteString("SampleCount: "+(rstring)numSamples+", ", fd, err);
+    assert(err==0);                        
+    fwriteString("TupleCount: "+(rstring)eventCount+",", fd, err);
+    assert(err==0);                        
+    fwriteString("MaxLatency: "+(rstring)maxLatency+",", fd, err);
+    assert(err==0);                        
+    fwriteString("SecondsOvershoot: "+(rstring)secondsOvershoot+",", fd, err);
+    assert(err==0);                        
+    fwriteString("NanosOvershoot: "+(rstring)nanosOvershoot+"\n", fd, err);
+    assert(err==0);                        
+    fflush(fd, err);
+    assert(err==0); 
+}
+
+public stateful rstring getTimeString()
+{
+    mutable Sys.tm brokenDownTime = {};
+    timestamp currentSeconds = getTimestamp();
+    println("getTimeString: Seconds "+(rstring)getSeconds(currentSeconds)+" nanos "+(rstring)getNanoseconds(currentSeconds));
+    time(currentSeconds, brokenDownTime);
+    return strftime(brokenDownTime, "%s (%Y-%m-%d %H:%M:%S)");
+}
+
+public stateful rstring getTimeStringAdjusted()
+{
+    mutable Sys.tm brokenDownTime = {};
+    timestamp currentSeconds = getTimestamp();
+    int64 seconds = getSeconds(currentSeconds);
+    uint32 nanos =getNanoseconds(currentSeconds);
+    println("getTimeStringAdjusted: Seconds "+(rstring)seconds+" nanos "+(rstring)nanos);
+    time(currentSeconds, brokenDownTime);
+    brokenDownTime.sec = brokenDownTime.sec - brokenDownTime.sec % 30;
+    return strftime(brokenDownTime, "%s (%Y-%m-%d %H:%M:%S)");
+}
+
+/* This composite operator sends out periodic samples of the input stream it consumes.
+ * @input In port that consumes the tuples. 
+ * @output Out port that produces the samples tuples. The sampled tuples will
+ * have the time as an additional attribtued appended to the front of the
+ * tuple. The time is the sampling time in string form, for presentation
+ * purposes.
+ * @param period sampling period
+ */
+public composite TimedSampler(input In; output Out) 
+{
+    param
+        expression<float64> $period;
+    graph
+        stream<uint8 dummy> Beat = Beacon() { 
+            param
+                period : $period; 
+        }
+
+        stream<tuple<rstring time>, In> Out = Custom(In; Beat) {
+            logic
+                state: {
+                    mutable boolean valid = false;
+                    mutable tuple<In> cache = {};
+                    mutable tuple<Out> res = {};
+                }
+                onTuple In: {
+                    cache = In;
+                    valid = true;
+                }
+                onTuple Beat: {
+                    if(valid) {
+                        assignFrom(res, cache);
+                        res.time = getTimeString();
+                        submit(res, Out);
+                    }
+                }
+        }
+}
+
+/* This composite operator sends out periodic beats if configured that way,
+ * otherwise does nothing.
+ * @output Out port that produces the beats.
+ * @param period beat period. if 0 (the default), then no beats are produced. 
+ */
+public composite OptionalBeat(output stream<uint8 dummy> Out) {
+    param
+        expression<uint32> $period : 0u; // by default we do not generate beat
+    graph
+        stream<uint8 dummy> Dummy = Beacon() { 
+            param
+                iterations : 1u;
+        }        
+        stream<uint8 dummy> Out = Custom(Dummy) {
+            logic             
+                onTuple Dummy: {
+                    if($period>0u) {
+                        while(!isShutdown()) {
+                            block((float64)$period);
+                            submit({dummy=0ub}, Out);
+                        }
+                    }
+                }
+        }
+}

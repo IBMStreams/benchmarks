@@ -1,0 +1,53 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+# 
+
+MON_FILE_TEMPLATE=$1
+EXT=$(basename $MON_FILE_TEMPLATE)
+MON_DIR=$(dirname $MON_FILE_TEMPLATE)
+
+mkdir -p $MON_DIR/CPU
+PREFIX=$MON_DIR/CPU/cpumonitoring.$(hostname)
+
+TEST_INTERVAL=$2
+NUM_CPUS=$3
+
+# Remove old monitoring reports
+rm -f $PREFIX.*.$EXT
+
+DIR=$(dirname $0)
+NUM_THREADS=`cat /proc/cpuinfo | grep "^processor" | wc -l`
+
+for(( cpu=0; cpu<$NUM_THREADS; cpu++ )); do
+  mpstat -P ALL | gawk '{if(NR == 3){out=$4; for(i=5;i<=NF;i++){out=out" "$i}; print "date " out " %cpu"}}' \
+  >> $PREFIX.cpu-$cpu.$EXT; \
+done 
+
+# Sync time to interval
+EXEC_DIR=$(dirname $0)
+$EXEC_DIR/../utilities/alignTimeToInterval $TEST_INTERVAL
+
+# mpstat in RHEL7 spits out an extra column (gnice) so use column
+# $NF for %idle
+mpstat -P ALL $TEST_INTERVAL | \
+while read input; do \
+    echo $input | gawk -v date="$(date +%s)" -v num="$NUM_THREADS" -v pre="$PREFIX" -v ext="$EXT" '{if($3>=0 && $3<num){out=$4; for(i=5;i<=NF;i++){out=out" "$i}; print date " " out " " 100-$NF >> pre".cpu-"$3"."ext}}'
+done

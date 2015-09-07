@@ -1,0 +1,64 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name <data-dir> <interval> <num-nodes> <num-cpus>"
+    echo ""
+    echo "  - <data-dir> : Directory to store monitoring data eg. memory util"
+    echo "  - <interval> : Monitoring interval (seconds)."
+    echo "  - <num-nodes> : Numbers of nodes."
+    echo "  - <num-cpus> : Numbers of cpus."
+    echo ""
+    echo "Stop monitoring all the hosts Sample usage:"
+    echo "    $name ../../Results/P_BAS_1/ 2 4 4"
+}
+
+if [[ $# -ne 4 ]]; then
+    usage;
+    exit 1;
+fi
+
+DIR=$(dirname $0)
+TOOLS_DIR=$(readlink -f $DIR/../../tools)
+DATA_DIR=$1
+TEST_INTERVAL=$2
+NUM_NODES=$3
+NUM_CPUS=$4
+MON_FILE_TEMPLATE=$DATA_DIR/$NUM_NODES.$NUM_CPUS
+MON_FILE_TEMPLATE=$(readlink -f $MON_FILE_TEMPLATE)
+NUMASTAT_SCRIPT=$(readlink -f $DIR)/checknumastat
+NUMASTATP_SCRIPT=$(readlink -f $DIR)/numastat_p
+
+COMMAND1="ps -o pid,sess,cmd -U $USER | grep 'Scripts/internal/memory' | \
+         grep -v grep | gawk '{if(\$1==\$2){print \$2}}' | sort | \
+         awk '{print \"pkill -9 -s\", \$0}' | sh"
+COMMAND2="ps -o pid,sess,cmd -U $USER | grep 'Scripts/internal/cpu' | \
+         grep -v grep | gawk '{print \$1}' | sort | \
+         awk '{print \"kill -9\", \$0}' | sh"
+
+hosts=$(cat $DIR/../hosts | grep analytic | cut -f 1 -d " ")
+for host in $hosts; do
+    COMMAND3="rm -f $DATA_DIR/server_stop_$host"
+    ssh -qx $host "$COMMAND1; $COMMAND2; $COMMAND3"
+done

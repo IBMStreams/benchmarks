@@ -1,0 +1,21 @@
+<?xml version="1.0" ?>
+<!-- begin_generated_IBM_copyright_prolog                             -->
+<!--                                                                  -->
+<!-- This is an automatically generated copyright prolog.             -->
+<!-- After initializing,  DO NOT MODIFY OR MOVE                       -->
+<!-- **************************************************************** -->
+<!-- Licensed Materials - Property of IBM                             -->
+<!-- 5724-Y95                                                         -->
+<!-- (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      -->
+<!-- US Government Users Restricted Rights - Use, duplication or      -->
+<!-- disclosure restricted by GSA ADP Schedule Contract with          -->
+<!-- IBM Corp.                                                        -->
+<!--                                                                  -->
+<!-- end_generated_IBM_copyright_prolog                               -->
+<i:Spltosplmm
+  xmlns:i="http://www.ibm.com/xmlns/prod/streams/spl/splmmindex">
+    <i:verbatim splStart="0" splEnd="1060" mmStart="0"/>
+    <i:verbatim splStart="1061" splEnd="2222" mmStart="1091"/>
+    <i:generated splStart="2223" splEnd="2224" mmStart="2253" mmEnd="2266"/>
+    <i:verbatim splStart="2225" splEnd="6553" mmStart="2267"/>
+</i:Spltosplmm>

@@ -1,0 +1,557 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<!-- begin_generated_IBM_copyright_prolog                             -->
+<!--                                                                  -->
+<!-- This is an automatically generated copyright prolog.             -->
+<!-- After initializing,  DO NOT MODIFY OR MOVE                       -->
+<!-- **************************************************************** -->
+<!-- Licensed Materials - Property of IBM                             -->
+<!-- 5724-Y95                                                         -->
+<!-- (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      -->
+<!-- US Government Users Restricted Rights - Use, duplication or      -->
+<!-- disclosure restricted by GSA ADP Schedule Contract with          -->
+<!-- IBM Corp.                                                        -->
+<!--                                                                  -->
+<!-- end_generated_IBM_copyright_prolog                               -->
+<toolkitModel xmlns="http://www.ibm.com/xmlns/prod/streams/spl/toolkit" productVersion="3.2.1.1" xmlns:common="http://www.ibm.com/xmlns/prod/streams/spl/common" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <toolkit name="lmon.benchmark" requiredProductVersion="2.0.0" version="1.0.0">
+    <description>LMON Benchmark Toolkit</description>
+    <uriTable>
+      <uri index="12" value="lmon.benchmark/EventLeveler_Native"/>
+      <uri index="10" value="lmon.benchmark/native.function/function.xml"/>
+      <uri index="6" value="lmon.benchmark/PatternDetection.spl"/>
+      <uri index="5" value="lmon.benchmark/Enrichment.spl"/>
+      <uri index="4" value="lmon.benchmark/Correlation.spl"/>
+      <uri index="11" value="lmon.benchmark/EventFormatter_Native"/>
+      <uri index="8" value="lmon.benchmark/CPU.spl"/>
+      <uri index="7" value="lmon.benchmark/Performance.spl"/>
+      <uri index="2" value="lmon.benchmark/StateManagement.spl"/>
+      <uri index="9" value="lmon.benchmark/BoilerPlate.spl"/>
+      <uri index="1" value="lmon.benchmark/EventGenerator.spl"/>
+      <uri index="3" value="lmon.benchmark/EventIO.spl"/>
+    </uriTable>
+    <namespace name="lmon.benchmark">
+      <primitiveOp language="Cpp" modelUriIndex="11" name="EventFormatter_Native" public="true">
+        <parameter cardinality="1" expressionMode="AttributeFree" name="file" optional="false" type="rstring"/>
+        <inputPort maxNumPorts="1" minNumPorts="1" optional="false" windowPunctInputMode="Oblivious">
+          <windowPolicy>NonWindowed</windowPolicy>
+        </inputPort>
+      </primitiveOp>
+      <primitiveOp language="Cpp" modelUriIndex="12" name="EventLeveler_Native" public="true">
+        <parameter cardinality="1" expressionMode="AttributeFree" name="maxTimeDiff" optional="false" type="uint64">
+          <description>Maximum time differene allowed</description>
+        </parameter>
+        <inputPort maxNumPorts="2" minNumPorts="2" optional="false" windowPunctInputMode="Oblivious">
+          <windowPolicy>NonWindowed</windowPolicy>
+        </inputPort>
+        <outputPort expressionMode="Expression" maxNumPorts="1" minNumPorts="1" optional="false" windowPunctOutputMode="Preserving"/>
+        <outputPort expressionMode="Expression" maxNumPorts="1" minNumPorts="1" optional="false" windowPunctOutputMode="Preserving"/>
+      </primitiveOp>
+      <compositeOp column="18" line="18" name="EventGenerator" potentialMain="false" public="true" uriIndex="1">
+        <parameter defaultValue="0.0" metaType="Expression" name="initDelay" optional="true" type="&lt;float64>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="workloadSize" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="cpu" optional="false" type="&lt;int32>"/>
+        <parameter defaultValue="false" metaType="Expression" name="midStart" optional="true" type="&lt;boolean>"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;Event.TimestampedLog>"/>
+      </compositeOp>
+      <compositeOp column="18" line="148" name="CommonWorkload" potentialMain="false" public="true" uriIndex="1">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+      </compositeOp>
+      <compositeOp column="18" line="18" name="RunningEventCounter" potentialMain="false" public="true" uriIndex="2">
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="period" optional="false" type="&lt;uint64>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;uint64 count, uint32 index>"/>
+      </compositeOp>
+      <compositeOp column="18" line="55" name="RunningEventCountMerger" potentialMain="false" public="true" uriIndex="2">
+        <parameter defaultValue="false" metaType="Expression" name="continuous" optional="true" type="&lt;boolean>"/>
+        <inputPort name="In" portIndex="0" type="stream&lt;uint64 count, uint32 index>"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;uint64 count>"/>
+      </compositeOp>
+      <compositeOp column="18" line="101" name="MessageMatcher" potentialMain="false" public="true" uriIndex="2">
+        <parameter metaType="Expression" name="poolIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+        <parameter defaultValue="0u" metaType="Expression" name="period" optional="true" type="&lt;uint32>"/>
+        <inputPort name="InA" portIndex="0"/>
+        <inputPort name="InB" portIndex="1"/>
+        <outputPort name="Matched" portIndex="0" type="stream&lt;uint8 poolIndex, uint32 deviceId, uint64 timeDelta, uint64 messageLatency, uint64 lastMessageLatency>"/>
+        <outputPort name="Summarized" portIndex="1" type="stream&lt;uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious, uint64 avgMessageLatency, uint64 minMessageLatency, uint64 maxMessageLatency>"/>
+      </compositeOp>
+      <compositeOp column="18" line="14" name="Event" potentialMain="true" public="true" uriIndex="3">
+        <type column="16" line="17" name="Source" static="true" type="enum { A, B }" uriIndex="3"/>
+        <type column="16" line="18" name="Kind" static="true" type="enum { Msg_Sent, Msg_Rcvd, Filler }" uriIndex="3"/>
+        <type column="16" line="19" name="Log" static="true" type="tuple&lt;uint64 timeMillis, Source sourceKind, uint8 sourceIndex, Kind eventKind, uint64 eventId, uint32 deviceId, uint64 messageId, uint32 randomId>" uriIndex="3"/>
+        <type column="16" line="27" name="EnrichedLog" static="true" type="Log, tuple&lt;rstring customerName>" uriIndex="3"/>
+        <type column="16" line="28" name="TimestampedLog" static="true" type="Log, tuple&lt;int64 timeStamp>" uriIndex="3"/>
+        <type column="16" line="29" name="EnrichedTimestampedLog" static="true" type="TimestampedLog, tuple&lt;rstring customerName>" uriIndex="3"/>
+        <enumLiterals column="31" line="17" static="true" typeName="Source" uriIndex="3">
+          <enum>A</enum>
+          <enum>B</enum>
+        </enumLiterals>
+        <enumLiterals column="29" line="18" static="true" typeName="Kind" uriIndex="3">
+          <enum>Msg_Sent</enum>
+          <enum>Msg_Rcvd</enum>
+          <enum>Filler</enum>
+        </enumLiterals>
+      </compositeOp>
+      <compositeOp column="18" line="36" name="EventFormatter" potentialMain="false" public="true" uriIndex="3">
+        <parameter defaultValue="true" metaType="Expression" name="native" optional="true" type="&lt;boolean>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="88" name="EventParser" potentialMain="false" public="true" uriIndex="3">
+        <parameter defaultValue="true" metaType="Expression" name="native" optional="true" type="&lt;boolean>"/>
+        <parameter defaultValue="-1" metaType="Expression" name="cpu" optional="true" type="&lt;int32>"/>
+        <inputPort name="In" portIndex="0" type="stream&lt;rstring event>"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;Event.Log>"/>
+      </compositeOp>
+      <compositeOp column="18" line="124" name="EventParserPerf" potentialMain="false" public="true" uriIndex="3">
+        <parameter defaultValue="-1" metaType="Expression" name="cpu" optional="true" type="&lt;int32>"/>
+        <parameter defaultValue="8" metaType="Expression" name="num_cpus" optional="true" type="&lt;int32>"/>
+        <inputPort name="In" portIndex="0" type="stream&lt;rstring event>"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;Event.TimestampedLog>"/>
+      </compositeOp>
+      <compositeOp column="18" line="26" name="CorrelateMessages" potentialMain="false" public="true" uriIndex="4">
+        <parameter defaultValue="false" metaType="Expression" name="filterOnAverage" optional="true" type="&lt;boolean>"/>
+        <parameter defaultValue="0u" metaType="Expression" name="period" optional="true" type="&lt;uint32>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;uint64 messageId, uint64 deltaMillis, uint64 timeMillis>"/>
+        <outputPort name="Sampled" portIndex="1" type="stream&lt;uint32 unmatched>"/>
+      </compositeOp>
+      <compositeOp column="18" line="100" name="CrossCorrelateMessages" potentialMain="false" public="true" uriIndex="4">
+        <parameter defaultValue="0u" metaType="Expression" name="period" optional="true" type="&lt;uint32>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;uint64 messageId, uint64 totalDeltaMillis, uint64 timeMillis>"/>
+        <outputPort name="Sampled" portIndex="1" type="stream&lt;uint32 unmatched, uint64 avgTotalDeltaMillis, uint64 exceptions>"/>
+      </compositeOp>
+      <compositeOp column="18" line="19" name="EventEnricherNoCache" potentialMain="false" public="true" uriIndex="5">
+        <parameter metaType="Expression" name="file" optional="false" type="&lt;rstring>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="74" name="EventEnricherCache" potentialMain="false" public="true" uriIndex="5">
+        <parameter metaType="Expression" name="file" optional="false" type="&lt;rstring>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="29" name="OrderAndCompletenessDetector" potentialMain="false" public="true" uriIndex="6">
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+        <parameter defaultValue="0u" metaType="Expression" name="period" optional="true" type="&lt;uint32>"/>
+        <inputPort name="InA" portIndex="0"/>
+        <inputPort name="InB" portIndex="1"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;uint64 messageId, boolean ordered, boolean complete>"/>
+        <outputPort name="Summarized" portIndex="1" type="stream&lt;uint64 numComplete, uint64 numIncomplete, uint64 numOrdered, uint64 numUnordered, uint64 numIncompleteFromBothEventSources, list&lt;uint64>[4] numMissingEvents>"/>
+      </compositeOp>
+      <compositeOp column="11" line="180" name="OrderMessages" potentialMain="false" uriIndex="6">
+        <inputPort name="InA" portIndex="0"/>
+        <inputPort name="InB" portIndex="1"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="24" name="EventCounterPerf" potentialMain="false" public="true" uriIndex="7">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="file" optional="false" type="&lt;rstring>"/>
+        <parameter metaType="Expression" name="period" optional="false" type="&lt;uint32>"/>
+        <parameter defaultValue="true" metaType="Expression" name="forward" optional="true" type="&lt;boolean>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="112" name="TimedSampler" potentialMain="false" public="true" uriIndex="7">
+        <parameter metaType="Expression" name="period" optional="false" type="&lt;float64>"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="148" name="OptionalBeat" potentialMain="false" public="true" uriIndex="7">
+        <parameter defaultValue="0u" metaType="Expression" name="period" optional="true" type="&lt;uint32>"/>
+        <outputPort name="Out" portIndex="0" type="stream&lt;uint8 dummy>"/>
+      </compositeOp>
+      <compositeOp column="18" line="22" name="CommonMain" potentialMain="false" public="true" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyWorkload" metaType="Operator" name="workload" optional="true"/>
+      </compositeOp>
+      <compositeOp column="18" line="51" name="EmptyWorkload" potentialMain="false" public="true" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+      </compositeOp>
+      <compositeOp column="11" line="59" name="ChainContainerForP1" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="229" name="ChainContainerForP2" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="399" name="ChainContainerForP3" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="569" name="ChainContainerForP4" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="739" name="ChainContainer" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="poolIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+      </compositeOp>
+      <compositeOp column="11" line="770" name="WorkloadContainer" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="poolIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+      </compositeOp>
+      <compositeOp column="18" line="799" name="CommonMainWithPools" potentialMain="false" public="true" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyPoolCore" metaType="Operator" name="poolACore" optional="true"/>
+        <parameter defaultValue="lmon.benchmark::EmptyPoolCore" metaType="Operator" name="poolBCore" optional="true"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyWorkload" metaType="Operator" name="workload" optional="true"/>
+      </compositeOp>
+      <compositeOp column="11" line="839" name="EmptyPoolCore" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="poolIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndexStart" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndexEnd" optional="false" type="&lt;uint32>"/>
+        <inputPort name="In" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="848" name="ChainAndPoolContainerForP1" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="1044" name="ChainAndPoolContainerForP2" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="1240" name="ChainAndPoolContainerForP3" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="1436" name="ChainAndPoolContainerForP4" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="1632" name="ChainContainerWithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="poolIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="1664" name="PoolContainer" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="poolIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndexStart" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndexEnd" optional="false" type="&lt;uint32>"/>
+        <inputPort name="In" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="1698" name="CommonMainWithPoolsAndCombiner" potentialMain="false" public="true" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="combinerCore" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter metaType="Type" name="poolOutputType" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyWorkload" metaType="Operator" name="workload" optional="true"/>
+      </compositeOp>
+      <compositeOp column="11" line="1747" name="PoolAndChainContainerForP1WithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter metaType="Type" name="poolOutputType" optional="false"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="1945" name="PoolAndChainContainerForP2WithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter metaType="Type" name="poolOutputType" optional="false"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="2143" name="PoolAndChainContainerForP3WithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter metaType="Type" name="poolOutputType" optional="false"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="2341" name="PoolAndChainContainerForP4WithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter metaType="Type" name="poolOutputType" optional="false"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="2539" name="PoolContainerWithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="poolIndex" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndexStart" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndexEnd" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Type" name="poolOutputType" optional="false"/>
+        <inputPort name="In" portIndex="0"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="2563" name="CombinerContainer" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <inputPort name="In" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="2593" name="CommonMainWithMergedPools" potentialMain="false" public="true" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyPoolContainerWithMergedPools" metaType="Operator" name="poolACore" optional="true"/>
+        <parameter defaultValue="lmon.benchmark::EmptyPoolContainerWithMergedPools" metaType="Operator" name="poolBCore" optional="true"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyWorkload" metaType="Operator" name="workload" optional="true"/>
+      </compositeOp>
+      <compositeOp column="11" line="2619" name="EmptyPoolContainerWithMergedPools" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <parameter metaType="Expression" name="sourceIndexStart" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndexEnd" optional="false" type="&lt;uint32>"/>
+        <inputPort name="In" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="2627" name="PoolAndChainContainerWithMergedPoolsForP1AndP2" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="2999" name="PoolAndChainContainerWithMergedPoolsForP3AndP4" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCore" optional="false"/>
+        <parameter metaType="Operator" name="poolCore" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="chainOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="3372" name="PoolContainerWithMergedPools" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="core" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="sourceKind" optional="false" type="&lt;Event.Source>"/>
+        <inputPort name="In" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="3399" name="CommonMainWithBSidedMergedChains" potentialMain="false" public="true" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCoreA" optional="false"/>
+        <parameter metaType="Operator" name="chainCoreB" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyWorkload" metaType="Operator" name="workload" optional="true"/>
+      </compositeOp>
+      <compositeOp column="11" line="3424" name="ChainContainerForBSidedMergedChainsForP1AndP3" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="coreA" optional="false"/>
+        <parameter metaType="Operator" name="coreB" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="3628" name="ChainContainerForBSidedMergedChainsForP2AndP4" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="coreA" optional="false"/>
+        <parameter metaType="Operator" name="coreB" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+      </compositeOp>
+      <compositeOp column="11" line="3832" name="ChainContainerForBSidedMergedChains" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="coreA" optional="false"/>
+        <parameter metaType="Operator" name="coreB" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="poolIndexA" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="poolIndexB" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+      </compositeOp>
+      <compositeOp column="18" line="3900" name="CommonMainWithBSidedMergedChainsAndImplicitMergedPoolsWithCombiner" potentialMain="false" public="true" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="chainCoreA" optional="false"/>
+        <parameter metaType="Operator" name="chainCoreB" optional="false"/>
+        <parameter metaType="Operator" name="combinerCore" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+        <parameter metaType="Type" name="coreBOutputType" optional="false"/>
+        <parameter defaultValue="lmon.benchmark::EmptyWorkload" metaType="Operator" name="workload" optional="true"/>
+      </compositeOp>
+      <compositeOp column="11" line="3937" name="ChainAndImplicitPoolContainerForBSidedMergedChainsForP1AndP3WithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="coreA" optional="false"/>
+        <parameter metaType="Operator" name="coreB" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+        <parameter metaType="Type" name="coreBOutputType" optional="false"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="4163" name="ChainAndImplicitPoolContainerForBSidedMergedChainsForP2AndP4WithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Operator" name="coreA" optional="false"/>
+        <parameter metaType="Operator" name="coreB" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+        <parameter metaType="Type" name="coreBOutputType" optional="false"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="4389" name="ChainContainerForBSidedMergedChainsWithOutput" potentialMain="false" uriIndex="9">
+        <parameter metaType="Operator" name="coreA" optional="false"/>
+        <parameter metaType="Operator" name="coreB" optional="false"/>
+        <parameter metaType="Operator" name="workload" optional="false"/>
+        <parameter metaType="Type" name="coreAOutputType" optional="false"/>
+        <parameter metaType="Type" name="coreBOutputType" optional="false"/>
+        <parameter metaType="Expression" name="nCPUs" optional="false" type="&lt;int32>"/>
+        <parameter metaType="Expression" name="poolIndexA" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="poolIndexB" optional="false" type="&lt;uint32>"/>
+        <parameter metaType="Expression" name="sourceIndex" optional="false" type="&lt;uint32>"/>
+        <outputPort name="Out" portIndex="0"/>
+      </compositeOp>
+      <function modelUriIndex="10" name="pinToCpu" native="true" returnType="int32" uriIndex="0">
+        <description>Pin to a given Cpu</description>
+        <prototype>stateful int32 pinToCpu(int32 cpu)</prototype>
+        <parameter name="cpu" type="int32"/>
+      </function>
+      <function modelUriIndex="10" name="parseEvent_Native" native="true" returnType="void" uriIndex="0">
+        <description>Parse a log event</description>
+        <prototype>&lt;tuple T&gt; stateful void parseEvent_Native(mutable T event, rstring text, int32 thisYear)</prototype>
+        <parameter mutable="true" name="event" type="T"/>
+        <parameter name="text" type="rstring"/>
+        <parameter name="thisYear" type="int32"/>
+      </function>
+      <function modelUriIndex="10" name="formatEvent_Native" native="true" returnType="void" uriIndex="0">
+        <description>Format a log event</description>
+        <prototype>&lt;tuple T&gt; stateful void formatEvent_Native(mutable rstring text, T event)</prototype>
+        <parameter mutable="true" name="text" type="rstring"/>
+        <parameter name="event" type="T"/>
+      </function>
+      <function column="1" line="68" name="getInitialEvent" native="false" returnType="Event.TimestampedLog" stateful="true" uriIndex="1">
+        <prototype>stateful Event.TimestampedLog getInitialEvent(Event.Source sourceKind, uint8 sourceIndex, boolean midStart)</prototype>
+        <parameter name="sourceKind" type="Event.Source"/>
+        <parameter name="sourceIndex" type="uint8"/>
+        <parameter name="midStart" type="boolean"/>
+      </function>
+      <function column="1" line="92" name="getNextEvent" native="false" returnType="void" stateful="true" uriIndex="1">
+        <prototype>stateful void getNextEvent(mutable Event.TimestampedLog evt)</prototype>
+        <parameter mutable="true" name="evt" type="Event.TimestampedLog"/>
+      </function>
+      <function column="1" line="115" name="getFillerEvent" native="false" returnType="void" stateful="true" uriIndex="1">
+        <prototype>stateful void getFillerEvent(mutable Event.TimestampedLog evt)</prototype>
+        <parameter mutable="true" name="evt" type="Event.TimestampedLog"/>
+      </function>
+      <function column="1" line="122" name="parseTimeMillis" native="false" returnType="uint64" stateful="true" uriIndex="1">
+        <prototype>stateful uint64 parseTimeMillis(rstring timeMillis)</prototype>
+        <parameter name="timeMillis" type="rstring"/>
+      </function>
+      <function column="1" line="136" name="getRandomId" native="false" returnType="uint32" stateful="true" uriIndex="1">
+        <prototype>stateful uint32 getRandomId()</prototype>
+      </function>
+      <function column="1" line="141" name="randomNum" native="false" returnType="uint32" stateful="true" uriIndex="1">
+        <prototype>stateful uint32 randomNum(uint32 start, uint32 end)</prototype>
+        <parameter name="start" type="uint32"/>
+        <parameter name="end" type="uint32"/>
+      </function>
+      <function column="1" line="227" name="processMessages" native="false" returnType="void" uriIndex="2">
+        <prototype>void processMessages(mutable list&lt;tuple&lt;uint64 time&gt;&gt; Aq, mutable list&lt;tuple&lt;uint64 time, uint64 latency, boolean done&gt;&gt; Bq, mutable list&lt;tuple&lt;uint64 delta, uint64 latency, uint64 lastLatency&gt;&gt; res)</prototype>
+        <parameter mutable="true" name="Aq" type="list&lt;tuple&lt;uint64 time>>"/>
+        <parameter mutable="true" name="Bq" type="list&lt;tuple&lt;uint64 time, uint64 latency, boolean done>>"/>
+        <parameter mutable="true" name="res" type="list&lt;tuple&lt;uint64 delta, uint64 latency, uint64 lastLatency>>"/>
+      </function>
+      <function column="1" line="70" name="timeMillisToTimestamp" native="false" returnType="timestamp" uriIndex="3">
+        <prototype>timestamp timeMillisToTimestamp(uint64 timeMillis)</prototype>
+        <parameter name="timeMillis" type="uint64"/>
+      </function>
+      <function column="1" line="78" name="timestampToTimeMillis" native="false" returnType="uint64" uriIndex="3">
+        <prototype>uint64 timestampToTimeMillis(timestamp ts)</prototype>
+        <parameter name="ts" type="timestamp"/>
+      </function>
+      <function column="1" line="151" name="parseEvent" native="false" returnType="void" uriIndex="3">
+        <prototype>void parseEvent(mutable Event.Log res, rstring event, mutable Sys.tm tm, int32 thisYear)</prototype>
+        <parameter mutable="true" name="res" type="Event.Log"/>
+        <parameter name="event" type="rstring"/>
+        <parameter mutable="true" name="tm" type="Sys.tm"/>
+        <parameter name="thisYear" type="int32"/>
+      </function>
+      <function column="1" line="48" name="lookupCustomerName" native="false" returnType="rstring" stateful="true" uriIndex="5">
+        <prototype>stateful rstring lookupCustomerName(uint64 fd, uint32 deviceId)</prototype>
+        <parameter name="fd" type="uint64"/>
+        <parameter name="deviceId" type="uint32"/>
+      </function>
+      <function column="1" line="105" name="lookupCustomerNames" native="false" returnType="void" stateful="true" uriIndex="5">
+        <prototype>stateful void lookupCustomerNames(uint64 fd, uint8 sourceIndex, mutable map&lt;uint32, rstring&gt; table)</prototype>
+        <parameter name="fd" type="uint64"/>
+        <parameter name="sourceIndex" type="uint8"/>
+        <parameter mutable="true" name="table" type="map&lt;uint32, rstring>"/>
+      </function>
+      <function column="1" line="132" name="updateMissingEventCounts" native="false" returnType="void" uriIndex="6">
+        <prototype>void updateMissingEventCounts(mutable list&lt;uint64&gt;[4] numMissingEvents, mutable uint64 numIncompleteFromBothEventSources, uint8 mask)</prototype>
+        <parameter mutable="true" name="numMissingEvents" type="list&lt;uint64>[4]"/>
+        <parameter mutable="true" name="numIncompleteFromBothEventSources" type="uint64"/>
+        <parameter name="mask" type="uint8"/>
+      </function>
+      <function column="1" line="147" name="checkMessageOrder" native="false" returnType="boolean" uriIndex="6">
+        <prototype>boolean checkMessageOrder(tuple&lt;uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId&gt; currentMessage, mutable map&lt;uint64, tuple&lt;uint64 time, uint8 mask, boolean ordered&gt;&gt; currentStates)</prototype>
+        <parameter name="currentMessage" type="tuple&lt;uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId>"/>
+        <parameter mutable="true" name="currentStates" type="map&lt;uint64, tuple&lt;uint64 time, uint8 mask, boolean ordered>>"/>
+      </function>
+      <function column="1" line="251" name="findMessagesToRemove" native="false" returnType="tuple&lt;int32 a, int32 b>" uriIndex="6">
+        <prototype>tuple&lt;int32 a, int32 b&gt; findMessagesToRemove(list&lt;tuple&lt;uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId&gt;&gt; messagesA, list&lt;tuple&lt;uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId&gt;&gt; messagesB, uint64 currentTime, mutable list&lt;tuple&lt;int8 src, int32 idx&gt;&gt; res)</prototype>
+        <parameter name="messagesA" type="list&lt;tuple&lt;uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId>>"/>
+        <parameter name="messagesB" type="list&lt;tuple&lt;uint64 timeMillis, Event.Source sourceKind, Event.Kind eventKind, uint64 messageId>>"/>
+        <parameter name="currentTime" type="uint64"/>
+        <parameter mutable="true" name="res" type="list&lt;tuple&lt;int8 src, int32 idx>>"/>
+      </function>
+      <function column="1" line="83" name="outputPerfStatsToFile" native="false" public="true" returnType="void" stateful="true" uriIndex="7">
+        <prototype>public stateful void outputPerfStatsToFile(uint64 fd, float64 rate, float64 latency)</prototype>
+        <parameter name="fd" type="uint64"/>
+        <parameter name="rate" type="float64"/>
+        <parameter name="latency" type="float64"/>
+      </function>
+      <function column="1" line="96" name="getTimeString" native="false" public="true" returnType="rstring" stateful="true" uriIndex="7">
+        <prototype>public stateful rstring getTimeString()</prototype>
+      </function>
+      <function column="1" line="11" name="getCPU" native="false" public="true" returnType="int32" uriIndex="8">
+        <prototype>public int32 getCPU(int32 ncpus, uint32 index, Event.Source source)</prototype>
+        <parameter name="ncpus" type="int32"/>
+        <parameter name="index" type="uint32"/>
+        <parameter name="source" type="Event.Source"/>
+      </function>
+    </namespace>
+  </toolkit>
+
+</toolkitModel>

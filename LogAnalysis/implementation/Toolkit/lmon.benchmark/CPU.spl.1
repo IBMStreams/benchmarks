@@ -1,0 +1,16 @@
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+
+public int32 getCPU(int32 ncpus, uint32 index)
+{
+    if(ncpus<0)
+        return -1;
+    return ((int32) index % ncpus)* (int32)4;
+}

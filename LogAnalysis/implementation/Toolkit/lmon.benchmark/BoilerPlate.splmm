@@ -1,0 +1,1175 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2015    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.benchmark;
+
+/* This composite creates one Chain per event source. 
+ * Each Chain becomes a PE of its own. 
+ *
+ * Optionally, it also creates one Workload per-source. Each Workload will run
+ * in its own PE as well.
+ */
+
+
+
+<%
+my $nSources = $ARGV[0];
+%>
+
+public composite CommonMain
+{
+    param
+        expression<int32> $nCPUs;
+        operator $core;
+        operator $workload : lmon.benchmark::EmptyWorkload;
+    graph
+        () as Sink1 = ChainContainerForP1() { 
+            param nCPUs: $nCPUs;
+                  core: $core;
+                  workload : $workload;
+        }
+        () as Sink2 = ChainContainerForP2() { 
+            param nCPUs: $nCPUs;
+                  core: $core;
+                  workload : $workload;
+        }
+        () as Sink3 = ChainContainerForP3() { 
+            param nCPUs: $nCPUs;
+                  core: $core; 
+                  workload : $workload;
+        }
+        () as Sink4 = ChainContainerForP4() { 
+            param nCPUs: $nCPUs;
+                  core: $core; 
+                  workload : $workload;
+        }
+}
+
+public composite EmptyWorkload 
+{
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;                
+}
+
+composite ChainContainerForP1
+{
+    param
+        expression<int32> $nCPUs;
+        operator $core;
+        operator $workload;
+    graph
+    <%	for(my $i=1; $i<=($nSources/4); ++$i) {%>                
+        () as Chain<%=$i%> = ChainContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $core;
+                workload: $workload;
+                poolIndex : 1u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+}
+
+composite ChainContainerForP2
+{
+    param
+        expression<int32> $nCPUs;
+        operator $core;
+        operator $workload;
+    graph
+    <%for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {%>
+        () as Chain<%=$i%> = ChainContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $core;
+                workload: $workload;
+                poolIndex : 2u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+}
+
+composite ChainContainerForP3
+{
+    param
+        expression<int32> $nCPUs;
+        operator $core;
+        operator $workload;
+    graph
+    <%for(my $i=1; $i<=($nSources/4); ++$i) {%>
+        () as Chain<%=$i%> = ChainContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $core;
+                workload: $workload;
+                poolIndex : 3u;                
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+}
+
+composite ChainContainerForP4
+{
+    param
+        expression<int32> $nCPUs;
+        operator $core;
+        operator $workload;
+    graph
+    <%for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {%>
+        () as Chain<%=$i%> = ChainContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $core;
+                workload: $workload;
+                poolIndex : 4u;   
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+}
+
+composite ChainContainer
+{
+    param
+        operator $core;
+        operator $workload;
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;        
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;        
+    graph
+        () as Workload = WorkloadContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex: $poolIndex;
+                sourceKind : $sourceKind;  
+                sourceIndex : $sourceIndex;
+                workload : $workload;
+        }
+        
+        () as Chain = $core() { 
+            param 
+                nCPUs : $nCPUs;
+                sourceKind : $sourceKind;  
+                sourceIndex : $sourceIndex;
+            config
+               placement: partitionColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind+(rstring)$sourceIndex),
+                          hostColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind),
+                          host(MainPool[(($poolIndex-1u)*(uint32)getCompileTimeValue("nNodes"))/4u]);
+        }      
+}
+
+composite WorkloadContainer() 
+{
+    param
+        operator $workload;      
+        expression<int32> $nCPUs;        
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        () as Workload = $workload() { 
+            param
+                nCPUs : $nCPUs;
+                sourceKind : $sourceKind;  
+                sourceIndex : $sourceIndex;
+            config
+                placement: partitionColocation("P"+(rstring)$poolIndex+"-WL-"+(rstring)$sourceKind+(rstring)$sourceIndex),
+                           host(WorkloadPool[(($poolIndex-1u)*(uint32)getCompileTimeValue("nNodes"))/4u]); 
+        }  
+}
+
+/* This composite creates one Chain per event source. Each Chain becomes a PE of
+ * its own. 
+ *
+ * Optionally, it also creates one Workload per-source. Each Workload will run
+ * in its own PE as well.
+ * 
+ * It also creates one Pool for each processing pool. Each Pool will receive
+ * streams produced by the Chains assigned to it.
+ */
+public composite CommonMainWithPools
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolACore : lmon.benchmark::EmptyPoolCore;
+        operator $poolBCore : lmon.benchmark::EmptyPoolCore;
+        type $chainOutputType;
+        operator $workload : lmon.benchmark::EmptyWorkload;
+    graph
+        () as Sink1 = ChainAndPoolContainerForP1() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolACore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+        }
+        () as Sink2 = ChainAndPoolContainerForP2() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolACore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+        }
+        () as Sink3 = ChainAndPoolContainerForP3() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolBCore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+        }
+        () as Sink4 = ChainAndPoolContainerForP4() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolBCore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+        }
+}
+
+composite EmptyPoolCore (input In) {
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;    
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndexStart;    
+        expression<uint32> $sourceIndexEnd;    
+}
+
+composite ChainAndPoolContainerForP1
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;        
+    graph
+    <%my @streams = ();
+      for(my $i=1; $i<=($nSources/4); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 1u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    () as Sink = PoolContainer(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core: $poolCore; 
+              poolIndex : 1u;
+              sourceKind : Event.A;
+              sourceIndexStart : 1u;
+              sourceIndexEnd :<%=($nSources/4)%>u;           
+    }        
+}
+
+composite ChainAndPoolContainerForP2
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 2u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    () as Sink = PoolContainer(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core: $poolCore; 
+              poolIndex : 2u;
+              sourceKind : Event.A;
+              sourceIndexStart : <%=(($nSources/4)+1)%>u;
+              sourceIndexEnd : <%=($nSources/2)%>u;           
+    }        
+}
+
+composite ChainAndPoolContainerForP3
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=1; $i<=($nSources/4); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 3u;                
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    () as Sink = PoolContainer(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core: $poolCore; 
+              poolIndex : 3u;
+              sourceKind : Event.B;
+              sourceIndexStart : 1u;
+              sourceIndexEnd : <%=($nSources/4)%>u;           
+    }        
+}
+
+composite ChainAndPoolContainerForP4
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {
+        push @streams, "Chain$i";
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 4u;   
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    () as Sink = PoolContainer(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core: $poolCore; 
+              poolIndex : 4u;
+              sourceKind : Event.B;
+              sourceIndexStart : <%=(($nSources/4)+1)%>u;
+              sourceIndexEnd : <%=($nSources/2)%>u;           
+    }        
+}
+
+composite ChainContainerWithOutput(output Out)
+{
+    param
+        operator $core;
+        operator $workload;    
+        type $chainOutputType;   
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;        
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndex;        
+    graph
+        () as Workload = WorkloadContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex: $poolIndex;
+                sourceKind : $sourceKind;  
+                sourceIndex : $sourceIndex;
+                workload : $workload;
+        }
+
+        stream<$chainOutputType> Out = $core() { 
+            param 
+                nCPUs : $nCPUs;
+                sourceKind : $sourceKind;  
+                sourceIndex : $sourceIndex;
+            config
+               placement: partitionColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind+(rstring)$sourceIndex),
+                          hostColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind),
+                          host(MainPool[(($poolIndex-1u)*(uint32)getCompileTimeValue("nNodes"))/4u]);
+        }                
+}
+
+composite PoolContainer(input In)
+{
+    param
+        operator $core;
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;    
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndexStart;    
+        expression<uint32> $sourceIndexEnd;    
+    graph
+        () as Sink = $core(In) {
+            param
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndex; 
+                sourceKind : $sourceKind;
+                sourceIndexStart : $sourceIndexStart;
+                sourceIndexEnd : $sourceIndexEnd;          
+            config
+                placement: partitionColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind),
+                           hostColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind);
+        }
+}
+
+/* This composite creates one Chain per event source. Each Chain becomes a PE of
+ * its own.
+ *
+ * Optionally, it also creates one Workload per-source. Each Workload will run
+ * in its own PE as well.
+ * 
+ * It also creates one Pool for each processing pool. Each Pool will
+ * receive streams produced by the Chains assigned to it.
+ *
+ * It also creates a Combiner that receives the streams produced by each Pool.
+ */
+public composite CommonMainWithPoolsAndCombiner
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $combinerCore; 
+        type $chainOutputType;
+        type $poolOutputType;      
+        operator $workload : lmon.benchmark::EmptyWorkload;
+    graph
+        stream<$poolOutputType> Res1 = PoolAndChainContainerForP1WithOutput() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolCore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+                  poolOutputType : $poolOutputType;
+        }
+        stream<$poolOutputType> Res2 = PoolAndChainContainerForP2WithOutput() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolCore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+                  poolOutputType : $poolOutputType;
+        }
+        stream<$poolOutputType> Res3 = PoolAndChainContainerForP3WithOutput() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolCore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+                  poolOutputType : $poolOutputType;
+        }
+        stream<$poolOutputType> Res4 = PoolAndChainContainerForP4WithOutput() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolCore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+                  poolOutputType : $poolOutputType;
+        }
+        () as Sink = CombinerContainer(Res1, Res2, Res3, Res4) {
+            param nCPUs : $nCPUs;
+                  core : $combinerCore;
+        }
+}
+
+composite PoolAndChainContainerForP1WithOutput(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;        
+        type $poolOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=1; $i<=($nSources/4); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 1u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    stream<$poolOutputType> Out = PoolContainerWithOutput(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core: $poolCore; 
+              poolIndex : 1u;
+              sourceKind : Event.A;
+              sourceIndexStart : 1u;
+              sourceIndexEnd : <%=($nSources/4)%>u;           
+              poolOutputType: $poolOutputType;
+    }        
+}
+
+composite PoolAndChainContainerForP2WithOutput(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;
+        type $poolOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 2u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    stream<$poolOutputType> Out = PoolContainerWithOutput(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core : $poolCore; 
+              poolIndex : 2u;
+              sourceKind : Event.A;
+              sourceIndexStart : <%=(($nSources/4)+1)%>u;
+              sourceIndexEnd : <%=($nSources/2)%>u;           
+              poolOutputType : $poolOutputType;
+    }        
+}
+
+composite PoolAndChainContainerForP3WithOutput(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;
+        type $poolOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=1; $i<=($nSources/4); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 3u;                
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    stream<$poolOutputType> Out = PoolContainerWithOutput(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core : $poolCore; 
+              poolIndex : 3u;
+              sourceKind : Event.B;
+              sourceIndexStart : 1u;
+              sourceIndexEnd : <%=($nSources/4)%>u; 
+              poolOutputType : $poolOutputType;          
+    }        
+}
+
+composite PoolAndChainContainerForP4WithOutput(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;
+        type $poolOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {
+        push @streams, "Chain$i";
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 4u;   
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+    stream<$poolOutputType> Out = PoolContainerWithOutput(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core : $poolCore; 
+              poolIndex : 4u;
+              sourceKind : Event.B;
+              sourceIndexStart : <%=(($nSources/4)+1)%>u;
+              sourceIndexEnd : <%=($nSources/2)%>u;   
+              poolOutputType : $poolOutputType;
+    }        
+}
+
+composite PoolContainerWithOutput(input In; output Out)
+{
+    param
+        operator $core;
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;    
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndexStart;    
+        expression<uint32> $sourceIndexEnd;   
+        type $poolOutputType; 
+    graph
+        stream<$poolOutputType> Out = $core(In) {
+            param
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndex; 
+                sourceKind : $sourceKind;
+                sourceIndexStart : $sourceIndexStart;
+                sourceIndexEnd : $sourceIndexEnd;          
+            config
+                placement: partitionColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind),
+                           hostColocation("P"+(rstring)$poolIndex+"-"+(rstring)$sourceKind);
+        }
+}
+
+composite CombinerContainer(input In)
+{
+    param
+        operator $core;
+        expression<int32> $nCPUs;
+    graph
+        () as Sink = $core(In) {
+            param
+                nCPUs : $nCPUs;
+                poolIndexStart : 1u; 
+                poolIndexEnd : 4u; 
+                sourceIndexStart : 1u;
+                sourceIndexEnd : <%=($nSources/2)%>u;
+            config
+                placement: partitionColocation("P4-Comb-AB"),
+                           hostColocation("P4-B");
+        }
+}
+
+/* This composite creates one Chain per event source. Each Chain becomes a PE of
+ * its own. 
+ *
+ * Optionally, it also creates one Workload per-source. Each Workload will run
+ * in its own PE as well.
+ * 
+ * It also creates one Pool for each pair of processing pools that share their
+ * source types (P1-P2 is one pair, and P3-P4 is the other pair). Each Pool will
+ * receive streams produced by the Chains assigned to it.
+ */
+
+public composite CommonMainWithMergedPools
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolACore : lmon.benchmark::EmptyPoolContainerWithMergedPools;
+        operator $poolBCore : lmon.benchmark::EmptyPoolContainerWithMergedPools;
+        type $chainOutputType;
+        operator $workload : lmon.benchmark::EmptyWorkload;
+    graph
+        () as Sink1 = PoolAndChainContainerWithMergedPoolsForP1AndP2() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolACore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+        }
+        () as Sink2 = PoolAndChainContainerWithMergedPoolsForP3AndP4() { 
+            param nCPUs : $nCPUs;
+                  chainCore: $chainCore;
+                  poolCore: $poolBCore;
+                  workload : $workload;
+                  chainOutputType : $chainOutputType;
+        }
+}
+
+composite EmptyPoolContainerWithMergedPools (input In) {
+    param
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+        expression<uint32> $sourceIndexStart;    
+        expression<uint32> $sourceIndexEnd;    
+}
+
+composite PoolAndChainContainerWithMergedPoolsForP1AndP2
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;        
+    graph
+    <%my @streams = ();
+      for(my $i=1; $i<=($nSources/4); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 1u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+
+    <%for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 2u;                
+                sourceKind : Event.A;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+
+    () as Sink = PoolContainerWithMergedPools(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core: $poolCore; 
+              sourceKind : Event.A;
+    }        
+}
+
+composite PoolAndChainContainerWithMergedPoolsForP3AndP4
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCore;
+        operator $poolCore;
+        operator $workload;
+        type $chainOutputType;
+    graph
+
+    <%my @streams = ();
+      for(my $i=1; $i<=($nSources/4); ++$i) {
+        push @streams, "Chain$i";          
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 3u;                
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+
+    <%for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {
+        push @streams, "Chain$i";
+    %>
+        stream<$chainOutputType> Chain<%=$i%> = ChainContainerWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                core : $chainCore;
+                workload: $workload;
+                poolIndex : 4u;   
+                sourceKind : Event.B;  
+                sourceIndex : <%=$i%>u;
+                chainOutputType : $chainOutputType;
+        }
+    <%}%>
+
+    () as Sink = PoolContainerWithMergedPools(<%=join(",",  @streams)%>) {
+        param nCPUs : $nCPUs;
+              core : $poolCore; 
+              sourceKind : Event.B;           
+    }        
+}
+
+composite PoolContainerWithMergedPools(input In)
+{
+    param
+        operator $core;
+        expression<int32> $nCPUs;
+        expression<Event.Source> $sourceKind;
+    graph
+        () as Sink = $core(In) {
+            param
+                nCPUs : $nCPUs;
+                sourceKind : $sourceKind;
+                sourceIndexStart : 1u;
+                sourceIndexEnd : <%=($nSources/2)%>u;
+            config
+                placement: partitionColocation("P"+($sourceKind==Event.A?"2":"4")+"-"+(rstring)$sourceKind),
+                           hostColocation("P"+($sourceKind==Event.A?"2":"4")+"-"+(rstring)$sourceKind);
+        }
+}
+
+/* This composite creates one Chain per event source. Each Chain becomes a PE of
+ * its own. The Chains that correspond to A sources each produce an output,
+ * which is fed as an input to the corresponding Chain from the B sources. The
+ * Chains that correspond to B sources also generate an output. 
+ *
+ * Optionally, it also creates one Workload per-source. Each Workload will run
+ * in its own PE as well.
+ */
+public composite CommonMainWithBSidedMergedChains
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCoreA;
+        operator $chainCoreB;
+        type $coreAOutputType;
+        operator $workload : lmon.benchmark::EmptyWorkload;
+    graph
+        () as Sink1 = ChainContainerForBSidedMergedChainsForP1AndP3() { 
+            param nCPUs : $nCPUs;
+                  coreA: $chainCoreA;
+                  coreB: $chainCoreB;
+                  coreAOutputType : $coreAOutputType;
+                  workload : $workload;
+        }
+        () as Sink2 = ChainContainerForBSidedMergedChainsForP2AndP4() { 
+            param nCPUs : $nCPUs;
+                  coreA: $chainCoreA;
+                  coreB: $chainCoreB;
+                  coreAOutputType : $coreAOutputType;
+                  workload : $workload;
+        }
+}
+
+composite ChainContainerForBSidedMergedChainsForP1AndP3()
+{
+    param
+        expression<int32> $nCPUs;
+        operator $coreA;
+        operator $coreB;
+        operator $workload;
+        type $coreAOutputType;        
+    graph
+    <%for(my $i=1; $i<=($nSources/4); ++$i) {%>
+        () as Chain<%=$i%> = ChainContainerForBSidedMergedChains() { 
+            param 
+                nCPUs : $nCPUs;
+                coreA : $coreA;
+                coreB : $coreB;
+                workload: $workload;
+                coreAOutputType : $coreAOutputType;
+                //poolIndexA : 1u;
+                //poolIndexB : 3u;                
+                poolIndexA : <%=!($i%2)+1%>u;
+                poolIndexB : <%=!($i%2)+1%>u;
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+}
+
+composite ChainContainerForBSidedMergedChainsForP2AndP4()
+{
+    param
+        expression<int32> $nCPUs;
+        operator $coreA;
+        operator $coreB;
+        operator $workload;
+        type $coreAOutputType;
+    graph
+    <%for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {%>
+        () as Chain<%=$i%> = ChainContainerForBSidedMergedChains() { 
+            param 
+                nCPUs : $nCPUs;
+                coreA : $coreA;
+                coreB : $coreB;
+                workload: $workload;
+                coreAOutputType : $coreAOutputType;
+                //poolIndexA : 2u;
+                //poolIndexB : 4u;
+                poolIndexA : <%=!($i%2)+3%>u;
+                poolIndexB : <%=!($i%2)+3%>u;                
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+}
+
+composite ChainContainerForBSidedMergedChains()
+{
+    param        
+        operator $coreA;
+        operator $coreB;
+        operator $workload;   
+        type $coreAOutputType; 
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndexA;        
+        expression<uint32> $poolIndexB;
+        expression<uint32> $sourceIndex;        
+    graph
+        () as WorkloadA = WorkloadContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexA;
+                sourceKind : Event.A;  
+                sourceIndex : $sourceIndex;
+                workload : $workload;
+        }
+        
+        stream<$coreAOutputType> OutA = $coreA() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexA;
+                sourceIndex : $sourceIndex;
+            config
+               placement: partitionColocation("P"+(rstring)$poolIndexA+"-A"+(rstring)$sourceIndex),
+                          hostColocation("P"+(rstring)$poolIndexA+"-A"),
+                          host(MainPool[(($poolIndexA-1u)*(uint32)getCompileTimeValue("nNodes"))/4u]);
+        }        
+
+        () as WorkloadB = WorkloadContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexB;
+                sourceKind : Event.B;  
+                sourceIndex : $sourceIndex;
+                workload : $workload;
+        }
+
+        () as Sink = $coreB(OutA) {
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexB;
+                sourceIndex : $sourceIndex;
+            config
+               placement: partitionColocation("P"+(rstring)$poolIndexB+"-B"+(rstring)$sourceIndex),
+                          hostColocation("P"+(rstring)$poolIndexB+"-B"),
+                          host(MainPool[(($poolIndexB-1u)*(uint32)getCompileTimeValue("nNodes"))/4u]);   
+        }
+}
+
+/* This composite creates one Chain per event source. Each Chain becomes a PE of
+ * its own. The Chains that correspond to A sources each produce an output,
+ * which is fed as an input to the corresponding Chain from the B sources. The
+ * Chains that correspond to B sources also generate an output. 
+ *
+ * Optionally, it also creates one Workload per-source. Each Workload will run
+ * in its own PE as well.
+ * 
+ * It also creates one implicit Pool for each cross pair of processing pools
+ * that differ in their source types (P1-P3 is one pair, and P2-P4 is the other
+ * pair). Each implicit Pool will receive streams produced by the Chains from
+ * the B sources assigned to it.
+ * 
+ * It also creates a Combiner that receives the streams produced by each Pool.
+ */
+public composite CommonMainWithBSidedMergedChainsAndImplicitMergedPoolsWithCombiner
+{
+    param
+        expression<int32> $nCPUs;
+        operator $chainCoreA;
+        operator $chainCoreB;
+        operator $combinerCore;
+        type $coreAOutputType;
+        type $coreBOutputType;
+        operator $workload : lmon.benchmark::EmptyWorkload;
+    graph
+        stream<$coreBOutputType> Res1 = ChainAndImplicitPoolContainerForBSidedMergedChainsForP1AndP3WithOutput() { 
+            param nCPUs : $nCPUs;
+                  coreA: $chainCoreA;
+                  coreB: $chainCoreB;
+                  coreAOutputType : $coreAOutputType;
+                  coreBOutputType : $coreBOutputType;
+                  workload : $workload;
+        }
+        stream<$coreBOutputType> Res2 = ChainAndImplicitPoolContainerForBSidedMergedChainsForP2AndP4WithOutput() { 
+            param nCPUs : $nCPUs;
+                  coreA: $chainCoreA;
+                  coreB: $chainCoreB;
+                  coreAOutputType : $coreAOutputType;
+                  coreBOutputType : $coreBOutputType;
+                  workload : $workload;
+        }
+        () as Sink = $combinerCore(Res1, Res2) {
+            param nCPUs : $nCPUs;
+                  sourceIndexStart : 1u;
+                  sourceIndexEnd : <%=($nSources/2)%>u;
+            config
+                placement: partitionColocation("P4-Comb-AB"),
+                           hostColocation("P4-B");
+        }
+}
+
+composite ChainAndImplicitPoolContainerForBSidedMergedChainsForP1AndP3WithOutput(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        operator $coreA;
+        operator $coreB;
+        operator $workload;
+        type $coreAOutputType;
+        type $coreBOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=1; $i<=($nSources/4); ++$i) {
+        push @streams, "Chain$i";
+    %>
+        stream<$coreBOutputType> Chain<%=$i%> = ChainContainerForBSidedMergedChainsWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                coreA : $coreA;
+                coreB : $coreB;
+                workload: $workload;
+                coreAOutputType : $coreAOutputType;
+                coreBOutputType : $coreBOutputType;
+                //poolIndexA : 1u;
+                //poolIndexB : 3u;
+                poolIndexA : <%=!($i%2)+1%>u;
+                poolIndexB : <%=!($i%2)+1%>u;                
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+    stream<$coreBOutputType> Out = Union(<%=join(";", @streams)%>) {
+        config
+            placement: partitionColocation("P3-Union-B"),
+                       hostColocation("P3-B");
+    }  
+}
+
+composite ChainAndImplicitPoolContainerForBSidedMergedChainsForP2AndP4WithOutput(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        operator $coreA;
+        operator $coreB;
+        operator $workload;
+        type $coreAOutputType;
+        type $coreBOutputType;
+    graph
+    <%my @streams = ();
+      for(my $i=(($nSources/4)+1); $i<=($nSources/2); ++$i) {
+        push @streams, "Chain$i";
+    %>
+        stream<$coreBOutputType> Chain<%=$i%> = ChainContainerForBSidedMergedChainsWithOutput() { 
+            param 
+                nCPUs : $nCPUs;
+                coreA : $coreA;
+                coreB : $coreB;
+                workload: $workload;
+                coreAOutputType : $coreAOutputType;
+                coreBOutputType : $coreBOutputType;
+                //poolIndexA : 2u;
+                //poolIndexB : 4u;
+                poolIndexA : <%=!($i%2)+3%>u;
+                poolIndexB : <%=!($i%2)+3%>u;                
+                sourceIndex : <%=$i%>u;
+        }
+    <%}%>
+    stream<$coreBOutputType> Out = Union(<%=join(";", @streams)%>) {
+        config
+            placement: partitionColocation("P4-Union-B"),
+                       hostColocation("P4-B");
+    }  
+}
+
+composite ChainContainerForBSidedMergedChainsWithOutput(output Out)
+{
+    param
+        operator $coreA;
+        operator $coreB;
+        operator $workload;   
+        type $coreAOutputType; 
+        type $coreBOutputType; 
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndexA;        
+        expression<uint32> $poolIndexB;
+        expression<uint32> $sourceIndex;        
+    graph
+        () as WorkloadA = WorkloadContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexA;
+                sourceKind : Event.A;  
+                sourceIndex : $sourceIndex;
+                workload : $workload;
+        }
+        
+        stream<$coreAOutputType> OutA = $coreA() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexA;
+                sourceIndex : $sourceIndex;
+            config
+               placement: partitionColocation("P"+(rstring)$poolIndexA+"-A"+(rstring)$sourceIndex),
+                          hostColocation("P"+(rstring)$poolIndexA+"-A"),
+                          host(MainPool[(($poolIndexA-1u)*(uint32)getCompileTimeValue("nNodes"))/4u]);
+        }        
+
+        () as WorkloadB = WorkloadContainer() { 
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexB;
+                sourceKind : Event.B;  
+                sourceIndex : $sourceIndex;
+                workload : $workload;
+        }
+
+        stream<$coreBOutputType> Out = $coreB(OutA) {
+            param 
+                nCPUs : $nCPUs;
+                poolIndex : $poolIndexB;
+                sourceIndex : $sourceIndex;
+            config
+               placement: partitionColocation("P"+(rstring)$poolIndexB+"-B"+(rstring)$sourceIndex),
+                          hostColocation("P"+(rstring)$poolIndexB+"-B"),
+                          host(MainPool[(($poolIndexB-1u)*(uint32)getCompileTimeValue("nNodes"))/4u]);   
+        }
+}
+

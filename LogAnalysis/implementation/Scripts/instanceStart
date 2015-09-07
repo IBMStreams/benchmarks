@@ -1,0 +1,139 @@
+#!/bin/bash
+# begin_generated_IBM_copyright_prolog                             
+#                                                                  
+# This is an automatically generated copyright prolog.             
+# After initializing,  DO NOT MODIFY OR MOVE                       
+# **************************************************************** 
+# Licensed Materials - Property of IBM                             
+# 5724-Y95                                                         
+# (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+# end_generated_IBM_copyright_prolog                               
+#                                                                  
+# Licensed Materials - Property of IBM                             
+# Copyright IBM Corp. 2011                                         
+# US Government Users Restricted Rights - Use, duplication or      
+# disclosure restricted by GSA ADP Schedule Contract with          
+# IBM Corp.                                                        
+#                                                                  
+
+# This script is used to start a streams instance
+# Default instance name is LMON_Benchmark.
+
+function usage
+{
+    name=$(basename $0)
+    echo "usage: $name"
+    echo ""
+    echo "Start the Streams instance."
+}
+
+if [[ $# -ge 1 ]]; then
+    usage;
+    exit 1;
+fi
+
+# STREAMS_ZKCONNECT must be set
+if [ -z "$STREAMS_ZKCONNECT" ] ; then
+  ./internal/logMsg "STREAMS_ZKCONNECT must be set."
+  exit 1
+fi
+
+# STREAMS_DOMAIN_ID must be set
+if [ -z "$STREAMS_DOMAIN_ID" ] ; then
+  ./internal/logMsg "STREAMS_DOMAIN_ID must be set."
+  exit 1
+fi
+
+# Create the domain using hosts from hosts file
+cat hosts | cut -f1 -d \  > hosts.justhosts
+streamtool mkdomain --hfile hosts.justhosts \
+                    --property sws.port=0 \
+                    --property jmx.port=0
+RC=$?
+if [ 0 -ne $RC ] ; then
+  ./internal/logMsg "Error creating domain $STREAMS_DOMAIN_ID"
+  exit 1
+fi
+streamtool genkey
+if [[ "x$LA_APPLICATION_NETWORK" != "x" ]] ; then
+  streamtool setdomainproperty domain.applicationNetwork=$LA_APPLICATION_NETWORK
+  RC=$?
+  if [ 0 -ne $RC ] ; then
+    ./internal/logMsg "Error setting application network $LA_APPLICATION_NETWORK for domain $STREAMS_DOMAIN_ID"
+    exit 1
+  fi
+  ./internal/logMsg "Set application network $LA_APPLICATION_NETWORK for domain $STREAMS_DOMAIN_ID"
+fi
+
+# Need to change this to prevent submitjob timeouts
+streamtool setdomainproperty controller.requestTimeout=300
+
+# Start the domain
+streamtool startdomain
+RC=$?
+if [ 0 -ne $RC ] ; then
+  ./internal/logMsg "Error starting domain $STREAMS_DOMAIN_ID"
+  exit 1
+fi
+
+# Tag the hosts.  Assume format in the hosts file is like this:
+# host1   --tags tag1,tag2
+while read NEXTLINE ; do
+    OK=1
+    if [[ $NEXTLINE =~ ^# ]] ; then
+      OK=0
+    elif [[ ! $NEXTLINE =~ \-\-tags ]] ; then
+      OK=0
+    fi
+    if [ 1 -eq $OK ] ; then
+      HOST=($(echo $NEXTLINE | sed "s/--tags.*//g"))
+      TAGS=($(echo $NEXTLINE | sed "s/.*--tags//g"))
+    if [ -n "$HOST" -a -n "$TAGS" ] ; then
+      ./internal/logMsg "Adding tags \"$TAGS\" to host $HOST"
+      streamtool chhost -a --tags $TAGS $HOST
+    fi
+  fi
+done < hosts
+
+
+# INSTANCE default to LMON_Benchmark
+INSTANCE=${INSTANCE:-LMON_Benchmark}
+
+if [ $(streamtool lsinstance $INSTANCE 2>/dev/null) ]; then
+    streamtool rminst --noprompt -i $INSTANCE || exit 1
+fi
+streamtool mkinst --hfile hosts.justhosts \
+    -i $INSTANCE  \
+    --property HC.MetricCollectionInterval=600
+RC=$?
+if [ 0 -ne $RC ] ; then
+  ./internal/logMsg "Error creating instance $INSTANCE"
+  exit 1
+fi
+if [[ "x$LA_APPLICATION_NETWORK" != "x" ]] ; then
+  streamtool setproperty -i $INSTANCE instance.applicationNetwork=$LA_APPLICATION_NETWORK
+  RC=$?
+  if [ 0 -ne $RC ] ; then
+    ./internal/logMsg "Error setting application network $LA_APPLICATION_NETWORK for instance $INSTANCE"
+    exit 1
+  fi
+  ./internal/logMsg "Set application network $LA_APPLICATION_NETWORK for instance $INSTANCE"
+fi
+# streamtool setproperty -i $INSTANCE hc.traceLevel=debug
+# streamtool setproperty -i $INSTANCE sam.traceLevel=debug
+# streamtool setproperty -i $INSTANCE sch.traceLevel=debug
+# streamtool setproperty -i $INSTANCE InfrastructureTraceLevel=trace
+streamtool startinst -i $INSTANCE
+RC=$?
+if [ 0 -ne $RC ] ; then
+  ./internal/logMsg "Error starting instance $INSTANCE"
+  exit 1
+fi
+if [[ "x$LA_POST_INSTANCE_COMMAND" != "x" ]]; then
+    ./internal/logMsg "Executing LA_POST_INSTANCE_COMMAND=$LA_POST_INSTANCE_COMMAND"
+    $LA_POST_INSTANCE_COMMAND
+fi

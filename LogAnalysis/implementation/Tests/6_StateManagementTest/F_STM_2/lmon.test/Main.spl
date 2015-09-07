@@ -1,0 +1,157 @@
+// begin_generated_IBM_copyright_prolog                             
+//                                                                  
+// This is an automatically generated copyright prolog.             
+// After initializing,  DO NOT MODIFY OR MOVE                       
+// **************************************************************** 
+// Licensed Materials - Property of IBM                             
+// 5724-Y95                                                         
+// (C) Copyright IBM Corp.  2014, 2014    All Rights Reserved.      
+// US Government Users Restricted Rights - Use, duplication or      
+// disclosure restricted by GSA ADP Schedule Contract with          
+// IBM Corp.                                                        
+//                                                                  
+// end_generated_IBM_copyright_prolog                               
+/*                                                                  */
+/* Licensed Materials - Property of IBM                             */
+/* Copyright IBM Corp. 2011                                         */
+/* US Government Users Restricted Rights - Use, duplication or      */
+/* disclosure restricted by GSA ADP Schedule Contract with          */
+/* IBM Corp.                                                        */
+/*                                                                  */
+
+namespace lmon.test;
+use lmon.benchmark::*;
+
+composite OneChainA(output Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Beat = FileSource() {
+            param
+                file : getSubmissionTimeValue("dataDir", "../../../../Data/DataFiles") + "/A" +
+                       (rstring) $sourceIndex + "/input-data";
+                format : line;
+                parsing : fast;            
+        }
+
+        stream<Event.Log> Parsed = EventParser(Beat) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind); 
+        }
+
+        stream<uint64 timeMillis, uint32 deviceId> Out = Functor(Parsed) {
+            param
+                filter: eventKind == Event.Msg_Rcvd;
+        } 
+}
+
+composite OneChainB(input stream<uint64 timeMillis, uint32 deviceId> FilteredA;
+                    output stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, uint64 avgMessageLatency> Out)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $poolIndex;
+        expression<uint32> $sourceIndex;
+    graph
+        stream<rstring event> Beat = FileSource() {
+            param
+                file : getSubmissionTimeValue("dataDir", "../../../../Data/DataFiles") + "/B" +
+                       (rstring) $sourceIndex + "/input-data";
+                format : line;
+                parsing : fast;            
+        }
+
+        stream<Event.Log> Parsed = EventParser(Beat) {
+            param
+                cpu :  getCPU($nCPUs, $sourceIndex, $sourceKind); 
+        }
+
+        stream<uint64 timeMillis, uint32 deviceId> FilteredB = Functor(Parsed) {
+            param
+                filter: eventKind == Event.Msg_Sent;
+        } 
+
+        // Match the messages and compute summaries (summaries sent at the end)
+        (stream<uint8 poolIndex, uint32 deviceId, uint64 timeDelta, 
+                uint64 messageLatency, uint64 lastMessageLatency> Matched;
+         stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta,
+                uint64 numFasterThanPrevious, uint64 numSlowerThanPrevious,
+                uint64 avgMessageLatency, uint64 minMessageLatency, uint64 maxMessageLatency> Summarized) 
+         = MessageMatcher(FilteredA; FilteredB) {
+            param
+                poolIndex : $poolIndex;
+                sourceIndex : $sourceIndex;
+        }        
+
+        stream<uint8 poolIndex, uint32 deviceId, uint64 timeDelta, uint64 messageLatency>
+            MatchedProjected = Functor(Matched) {}
+        
+        () as Sink1 = FileSink(MatchedProjected) {
+            param
+                file : "B" + (rstring) $sourceIndex + ".output-data";
+                format : txt;
+        }
+
+        stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, uint64 avgMessageLatency>
+            Out = Functor(Summarized) {}
+
+        () as Sink2 = FileSink(Out) {
+            param
+                file : "B" + (rstring) $sourceIndex + ".summary";
+                format : txt;
+        }
+}
+
+composite Combiner(input stream<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, uint64 avgMessageLatency> In)
+{
+    param
+        expression<int32> $nCPUs;
+        expression<uint32> $sourceIndexStart;
+        expression<uint32> $sourceIndexEnd;
+    graph
+        // Receives one update from each chain
+        stream<uint8 poolIndex, uint64 minTimeDelta> Finalized = Custom(In) {
+            logic
+                state : { 
+                    mutable tuple<uint8 poolIndex, uint64 minTimeDelta> 
+                        res = { poolIndex=0ub, minTimeDelta = 0xffffffffffffffffu }; 
+                }
+                onTuple In : {
+                    if(minTimeDelta<res.minTimeDelta) {
+                        res.poolIndex = In.poolIndex;
+                        res.minTimeDelta = In.minTimeDelta;
+                    }
+                }
+                onPunct In: {
+                    if(currentPunct()==Sys.FinalMarker) 
+                        submit(res, Finalized);
+                }
+        }
+        
+        () as Sink = FileSink(Finalized) {
+            param
+                file : "pool.min-delta";
+                format : txt;
+        }       
+}
+
+composite Main 
+{
+  graph
+      () as Sink1 = CommonMainWithBSidedMergedChainsAndImplicitMergedPoolsWithCombiner() { 
+          param nCPUs : (int32) getSubmissionTimeValue("nCPUs", "-1");
+                chainCoreA : lmon.test::OneChainA; 
+                chainCoreB : lmon.test::OneChainB; 
+                combinerCore : lmon.test::Combiner;
+                coreAOutputType : tuple<uint64 timeMillis, uint32 deviceId>;
+                coreBOutputType : tuple<uint8 poolIndex, uint8 sourceIndex, uint64 minTimeDelta, uint64 avgMessageLatency>;  
+      }
+
+  config
+      hostPool : WorkloadPool = createPool({tags=["workload"], size=4}, Sys.Shared),
+                 MainPool = createPool({tags=["analytic"], size=(int32)getCompileTimeValue("nNodes")}, Sys.Shared); 
+}
+
