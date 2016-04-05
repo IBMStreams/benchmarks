@@ -1,0 +1,66 @@
+/*
+==================================================================================
+                       RACING IBM STREAMS ON LINEAR ROAD
+                       *********************************
+This file contains the data types that are commonly used in the IBM Streams code
+that performs the Linear Road analytics which offers one particular method to evaluate
+a Streaming Middleware product by measuring its key performance indicators.
+
+In order to understand the code below, one should have a good grounding in
+the imaginary scenario on which the Linear Road is based upon.
+If necessary, please read about that first before proceeding with the code below.
+
+http://www.cs.brandeis.edu/~linearroad/ 
+
+First created on: Aug/19/2015
+Last modified on: Sep/30/2015
+==================================================================================
+*/
+namespace com.ibm.streamsx.lr.common;
+
+// Let the compiler know about the other composites and toolkits the code below depends on.
+// Following are for the DPS toolkit namespaces that provide the functions we will use in the code below.
+use com.ibm.streamsx.lock.distributed::*;
+use com.ibm.streamsx.store.distributed::*;
+
+// =========================================================================================
+// All the commonly used data types will be declared here.
+//
+// This type is used by the DataFeeder to send the LR events to a kafka topic. 
+// Once the DataFeeder sends it to a kafka topic, then the analytics part of
+// this application will pull it from that queue and then normalize the
+// CSV data into a regular tuple format as shown in the next type declaration below.
+type LinearRoadEventCsvType = tuple<rstring message>;
+
+// This type is used by the DataFeeder to send to a Streams operator via TCP.
+// This is also the format interally used within this application.
+type LinearRoadEventType = tuple<int32 eventType, int32 eventTxTimestamp,
+   int32 vehicleId, int32 vehicleSpeed, int32 expressWayNumber,
+   int32 laneNumber, int32 directionIndicator, int32 segmentId,
+   int32 vehiclePosition, int32 queryId, int32 startingSegment,
+   int32 endingSegment, int32 dayOfWeek, int32 minuteOfCurrentDay,
+   int32 dayInThePast, int64 eventRxTimestamp>;
+   
+type TollHistoryType = tuple<int32 vehicleId, int32 dayInThePast, 
+   int32 expressWayNumber, int32 totalTollAmount>;
+
+type SegmentHistoryType = tuple<int32 dayInThePast, int32 minuteOfCurrentDay,
+   int32 expressWayNumber, int32 directionIndicator, int32 segmentId,
+   int32 averageSpeed, int32 numberOfVehicles, int32 tollCharge>;
+
+type AccountBalanceType = tuple<int32 vehicleId, int32 balance, int32 mostRecentBalanceUpdateTime>;
+
+type AccountBalanceResultType = tuple<int32 eventType, int32 eventTxTimestamp,
+	int32 resultEmitTimestamp, int32 queryId>, AccountBalanceType;
+
+type FinalOutputType = tuple<rstring line>;
+
+type VehicleInfoType = tuple<int32 lastTraveledSegmentId, int32 lastTraveledLaneNumber,
+   list<int32> reportedPositions, int32 notifiedTollCharge>;
+
+type VehicleExpresswayInfoType = tuple<int32 expressWayNumber, int32 directionIndicator>;
+
+type PerMinuteSegmentStatisticsType = tuple<int32 totalVehicleSpeed,
+   int32 totalPositionReports, set<int32> vehicleIds, int32 numberOfVehicles>; 
+   
+// =========================================================================================

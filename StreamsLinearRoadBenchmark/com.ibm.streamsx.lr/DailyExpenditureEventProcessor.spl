@@ -1,0 +1,95 @@
+/*
+==================================================================================
+                       RACING IBM STREAMS ON LINEAR ROAD
+                       *********************************
+This file contains the IBM Streams code for DEEP (Daily Expenditure Event Processor)
+that processes the Daily Expenditure event received by the main composite that
+performs the Linear Road analytics which offers one particular method to evaluate
+a Streaming Middleware product by measuring its key performance indicators.
+
+In order to understand the code below, one should have a good grounding in
+the imaginary scenario on which the Linear Road is based upon.
+If necessary, please read about that first before proceeding with the code below.
+
+http://www.cs.brandeis.edu/~linearroad/ 
+
+First created on: Aug/19/2015
+Last modified on: Aug/29/2015
+==================================================================================
+*/
+namespace com.ibm.streamsx.lr;
+
+// Let the compiler know about the other composites and toolkits the code below depends on.
+// Commonly used data types and SPL functions are available in this namespace.
+use com.ibm.streamsx.lr.common::*;
+// Following are for the DPS toolkit namespaces that provide the functions we will use in the code below.
+use com.ibm.streamsx.lock.distributed::*;
+use com.ibm.streamsx.store.distributed::*;
+
+// Define the non-main DEEP composite to process all the Daily Expenditure events.
+// This is relatively a simple composite containing the necessary logic to address the needs of
+// handling the historical query events that are auxiliary to the Linear Road scenario.
+// These are Type 3 events that account for 1% of the total traffic that will be sent our way.
+// More specifically, Type 3 events account for 10% of the total historical queries that will be sent our way.
+public composite DailyExpenditureEventProcessor(output DailyExpenditure; input DailyExpenditureEvent) {
+	param
+		// If customers want us to show more details in the final results for their own validation needs,
+		// we can add additional fields in the output CSV string. Otherwise, we can strictly adhere to
+		// what is stated in the LR PAPER specification. This flag will allow us to adjust that.
+		expression<boolean> $PRODUCE_RESULTS_STRICTLY_FOR_LR_SPECIFICATION :
+			(boolean)getSubmissionTimeValue("ProduceResultsForLRSpec", "false");
+
+	// A sub-graph that will be part of the main application topology begins here.		
+	graph
+		stream<FinalOutputType> DailyExpenditure as DE = Functor(DailyExpenditureEvent as DEE) {
+			logic
+				state: {
+					mutable int32 _dailyTollExpense = 0;
+					mutable rstring _key = "";
+					mutable uint64 _err = 0ul;
+					mutable boolean _res = false;
+					boolean _produceResultsStrictlyForLRSpecification = $PRODUCE_RESULTS_STRICTLY_FOR_LR_SPECIFICATION;
+					mutable rstring _resultLine = "";
+				}
+				
+				onTuple DEE: {
+					// Specification: "Return a total of all assessed tolls for a vehicle on a given expressway on a given day."
+					// Let us get the daily toll expense for a given vehicle for a given expressway for a 
+					// given day in the past 10 weeks from a vast set of reference data we already loaded into  
+					// the globally accessible DPS TTL store.
+					_key = (rstring)DEE.vehicleId + "_" + (rstring)DEE.dayInThePast +
+						"_" + (rstring)DEE.expressWayNumber;
+					_res = dpsGetTTL(_key, _dailyTollExpense, _err);
+
+					if (_res == false) {
+						appTrc(Trace.error, "_X_GGGGGGGGGGGG (Inside DailyExpenditure operator) Unexpected error in reading the daily expenditure amount for " +
+						_key + " at time " + (rstring)DEE.eventTxTimestamp + ". Error code=" + (rstring)dpsGetLastErrorCodeTTL() + 
+						", Error msg=" + dpsGetLastErrorStringTTL() + ", Incoming Daily Expenditure Event=" + (rstring)DEE);
+						_dailyTollExpense = 0;
+					}
+					
+					// Sometimes, customers may want us to include additional fields in the output CSV string.
+					// In that case, they will have their own LR validator. We have a switch that tells us whether
+					// we want to stricty adhere to the LR specification result format or not.
+					// That switch lets us output the result in one of those two ways.
+					if (_produceResultsStrictlyForLRSpecification == true) {
+						// Type3: (type, time, emit, qid, answer)
+						_resultLine = (rstring)DEE.eventType + "," + (rstring)DEE.eventTxTimestamp + "," + 
+							(rstring)(DEE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - DEE.eventRxTimestamp)) +
+							"," + (rstring)DEE.queryId + "," + (rstring)_dailyTollExpense;
+					} else {
+						// Type3: (type, time, emit, qid, answer)
+						// [As you can notice, there is no customer specific change at this time. Both are the same.]
+						_resultLine = (rstring)DEE.eventType + "," + (rstring)DEE.eventTxTimestamp + "," + 
+							(rstring)(DEE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - DEE.eventRxTimestamp)) +
+							"," + (rstring)DEE.queryId + "," + (rstring)_dailyTollExpense;	
+					}					
+				}
+				
+			output
+				// Create the Daily expenditure output tuple as a single string so that
+				// it can be written to a file via the FileSink for result validation.
+				// We will format a string output with the Type 3 query result fields in it.
+				DE: line = _resultLine;
+		}		
+}

@@ -1,0 +1,37 @@
+<HTML>
+	<HEAD>
+		<TITLE></TITLE>
+		<STYLE type="text/css"> BODY {COLOR: BLACK; BACKGROUND: WHITE}
+	PRE {COLOR: GREEN; BACKGROUND: WHITE; FONT-FAMILY: MONOSPACE;}
+	</STYLE>
+		<META content="Microsoft Visual Studio 7.0" name="GENERATOR">
+	</HEAD>
+	<BODY>
+		<H1>Files</H1>
+		<ul>
+			<li>
+				<b>LRDataProvider.h: </b>
+			header file of linear road data driver
+			<li>
+				<b>LRDataProvider.cpp: </b>
+			linear road data driver
+			<li>
+				<b>Tuple.cpp: </b>
+			structure of a linear road tuple (a line)
+			<li>
+				<b>MemTuples.cpp:</b> buffer of linear road tuples
+			</li>
+		</ul>
+		<H1>Compile to a library file</H1>
+		<UL>
+			<li>
+				Creating object files
+				<PRE>g++ -g -O -c LRDataProvider.cpp MemTuples.cpp Tuple.cpp</PRE>
+			<li>
+				Linking libraries
+				<PRE>ar cru libLRDataProvider.a LRDataProvider.o MemTuples.o Tuple.o
+				<br>ranlib libLRDataProvider.a</PRE>
+			</li>
+		</UL>
+	</BODY>
+</HTML>

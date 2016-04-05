@@ -1,0 +1,1088 @@
+/*
+==================================================================================
+                       RACING IBM STREAMS ON LINEAR ROAD
+                       *********************************
+This file contains the IBM Streams code for PREP (Position Report Event Processor)
+that processes the Position Report event received by the main composite that
+performs the Linear Road analytics which offers one particular method to evaluate
+a Streaming Middleware product by measuring its key performance indicators.
+
+In order to understand the code below, one should have a good grounding in
+the imaginary scenario on which the Linear Road is based upon.
+If necessary, please read about that first before proceeding with the code below.
+
+http://www.cs.brandeis.edu/~linearroad/ 
+
+First created on: Aug/19/2015
+Last modified on: Oct/02/2015
+==================================================================================
+*/
+namespace com.ibm.streamsx.lr;
+
+// Let the compiler know about the other composites and toolkits the code below depends on.
+// Commonly used data types and SPL functions are available in this namespace.
+use com.ibm.streamsx.lr.common::*;
+// Following are for the DPS toolkit namespaces that provide the functions we will use in the code below.
+use com.ibm.streamsx.lock.distributed::*;
+use com.ibm.streamsx.store.distributed::*;
+
+// Define the non-main PREP composite to process all the Position Report events.
+// This is relatively a big composite containing the necessary logic to address the needs of
+// handling the real time events that are central to the Linear Road scenario.
+// These are Type 0 events that account for 99% of the total traffic that will be sent our way.
+//
+// It is important to note that this non-main composite will be invoked from the main composite of
+// this application within a mixed mode Perl for loop. What that means is, this non-main composite will be
+// run in a parallel fashion with multiple instances of it being active at the same time i.e. a dedicated
+// PREP instance will be available to handle all the traffic per expressway per direction.
+// All the traffic flowing in a particular direction on a particular expressway will automatically
+// get routed to a dedicated instance of this PREP non-main composite. That powerful magic is
+// done by the mixed mode (SPL + Perl) feature available in the IBM Streams product.
+public composite PositionReportEventProcessor(output TollNotification, 
+	AccidentAlert, AccountBalanceResult; input PositionReportEvent, TimerSignal) {
+	// Declare the constants that will be used in the code below.
+	param
+		expression<int32> $ENTRY_LANE : 0;
+		expression<int32> $EXIT_LANE : 4;
+		expression<int32> $ACCOUNT_BALANCE_QUERY_EVENT : 2;
+		// If customers want us to show more details in the final results for their own validation needs,
+		// we can add additional fields in the output CSV string. Otherwise, we can strictly adhere to
+		// what is stated in the LR PAPER specification. This flag will allow us to adjust that.
+		expression<boolean> $PRODUCE_RESULTS_STRICTLY_FOR_LR_SPECIFICATION :
+			(boolean)getSubmissionTimeValue("ProduceResultsForLRSpec", "false");
+		// See the commentary in the getCurrentAccountBalance SPL function at the bottom of
+		// this file for the purpose of this constant.
+		expression<int32> $ACCOUNT_BALANCE_UPDATE_TIME_ADJUSTMENT_THRESHOLD : 2;
+
+	// A sub-graph that will be part of the main application topology begins here.		
+	graph
+		(stream<FinalOutputType> TollNotification as TN;
+		 stream<FinalOutputType> AccidentAlert as AA;
+		 stream<AccountBalanceResultType> AccountBalanceResult as ABR) = Custom(PositionReportEvent as PRE; TimerSignal as TS) {
+			logic
+				state: {
+					// Vehicle info tuple with the lastTraveledSegmentId, 4 previous positions and 
+					// notfiedTollCharge for the use of a current expressway segment. 
+					mutable VehicleInfoType _vehicleInfoTuple = {};  
+					//
+					// Account balance tuple with the vehicleId, balance and the most recent balance update time.
+					mutable AccountBalanceType _accountBalanceTuple = {};
+					//
+					// Account balance result tuple with the same attributes as the previous tuple definition + return code + error msg if any.
+					mutable AccountBalanceResultType _accountBalanceResultTuple = {};
+					//
+					// Per minute Segment statistics tuple with total vehicle speed, total number of
+					// position reports, a set of vehicle ids and the numberOfVehicles in that segment.
+					mutable PerMinuteSegmentStatisticsType _perMinuteSegmentStatisticsTuple = {};					
+					//
+					// A local cache to keep the details about all the vehicles traveling  
+					// in a given direction on a given expressway.
+					// Key: vehicleId, Value: VehicleInfoType tuple
+					mutable map<int32, VehicleInfoType> _vehicleInfoCache = {};
+					//
+					// Key: Lane+Position, Value: Set of vehicle ids stopped at that location.
+					mutable map<rstring, set<int32>> _stoppedCars = {};
+					// 
+					// List of integer values indicating whether there is an ongoing accident or not in a given segment.
+					// -1 means no accident and a value >= 0 will indicate there is an accident and 
+					// a non -1 value denotes the minute at which an accident was reported.
+					mutable list<int32>[100] _accidentDetectionTime = [];
+					//
+					// List of integer values indicating the time at which an accident was cleared in a given segment.
+					// This value will be held only for the duration of the minute when the accident got cleared.
+					// Outside of that minute, this value will get reset to -1.
+					mutable list<int32>[100] _accidentClearingTime = [];
+					//
+					// A list containing another list of segment statistics.
+					// (In other words, a two dimensional array a1 [100][180])
+					// The nested (inner) list element contains segment statistics for
+					// every single minute block contained in the entire duration of the application run.
+					// Typically for 3 hours i.e. 180 list items in total each holding statistics
+					// for every single minute for a given segment. There are 100 segments in the LR scenario.
+					mutable list<list<PerMinuteSegmentStatisticsType>[180]>[100] _segmentStatistics = [];
+					mutable rstring _key = "";
+					mutable uint64 _err = 0ul;
+					mutable boolean _res = false;
+					mutable int32 _sizeOfReportedPositions = 0;
+					mutable uint64 _eventCnt = 0ul;
+					mutable uint64 _lastKnownEventCnt = 0ul;
+					mutable boolean _linearRoadProcessingEnded = false;
+					mutable int32 _notifiedTollCharge = -1;
+					mutable FinalOutputType _oTuple = {};
+					mutable int32 _loopCnt = 0;
+					mutable boolean _produceResultsStrictlyForLRSpecification = $PRODUCE_RESULTS_STRICTLY_FOR_LR_SPECIFICATION;
+					mutable PositionReportEvent _mostRecentlyReceivedEvent = {};
+					// Variables used to count different unexpected situations during the application run.
+					mutable int32 _invalidSegmentIdErrorCnt = 0;
+					mutable int32 _invalidEventTxTimeStampErrorCnt = 0;
+					mutable int32 _invalidFirstTimeAppearanceInExitLaneErrorCnt = 0;
+					mutable int32 _moreThanTwoCarsInAnAccidentCnt = 0;
+					// Use these two variables to detect if a given event processor is
+					// receiving events for different expressway/direction-indicator combination.
+					mutable int32 _expressWayNumberForThisEventProcessor = -1;
+					mutable int32 _directionIndicatorForThisEventProcessor = -1;
+					mutable int32 _expresswayRoutingErrorCnt = 0;
+					// Variable to hold the appTrc aspect value.
+					mutable rstring _appTrcAspect = "";
+				}
+				
+				onTuple PRE: {
+					// In the Linear Road application, we want every event processor handling the
+					// type 0 (Position report) event to strictly receive data belonging to a 
+					// particular expressway and a particular direction. If that strict routing is
+					// not done, then our segment statistics calculation will go haywire.
+					// Due to Split routing map misconfiguration, we may route data belonging to
+					// multiple expressways into a particular event processor.
+					// If that ever happpens, we will log it here to alert the user. In such cases,
+					// the only remedy is to tighten Split operator's routing map.
+					if (_expressWayNumberForThisEventProcessor == -1) {
+						_expressWayNumberForThisEventProcessor = PRE.expressWayNumber;
+						_directionIndicatorForThisEventProcessor = PRE.directionIndicator;
+						_appTrcAspect = "x" + (rstring)PRE.expressWayNumber + 
+							"_d" + (rstring)PRE.directionIndicator;
+					} else {
+						if (_expressWayNumberForThisEventProcessor != PRE.expressWayNumber || 
+							_directionIndicatorForThisEventProcessor != PRE.directionIndicator) {
+							// Expressway data routing error.
+							appTrc(Trace.debug, "_X_RRRRRRRRRRRRRR" + 
+								"-->ExpectedExpressway=" + (rstring)_expressWayNumberForThisEventProcessor + 
+								", UnexpectedExpressway=" + (rstring)PRE.expressWayNumber +
+								"-->ExpectedDirectionIndicator=" + (rstring)_directionIndicatorForThisEventProcessor + 
+								", UnexpectedDirectionIndicator=" + (rstring)PRE.directionIndicator, _appTrcAspect);
+							_expresswayRoutingErrorCnt++;
+							return;
+						}
+					}							
+				
+					// This composite will receive both the position report events as well as 
+					// the account balance events. This is done so that the type 2 account balance
+					// events get processed in the right order of arrival i.e. they get processed
+					// after a type 0 event is fully analyzed inside this composite. That is possible
+					// by queuing up the type 2 requests in this composite right behind the other type 0
+					// events. All we have to do here is to fetch the current account balance for a given
+					// vehicle id and simply forward the type 2 results to a dedicated
+					// composite available to take care of writing the account balance results. By routing the
+					// type 2 events via this particular type 0 event processor, we are giving the 
+					// type 2 events a very good chance of fetching the accurate current account
+					// balance value for a given vehicle and report that value back to the caller. 
+					if (PRE.eventType == $ACCOUNT_BALANCE_QUERY_EVENT) {
+						getCurrentAccountBalance(PRE, _accountBalanceResultTuple,
+							$ACCOUNT_BALANCE_UPDATE_TIME_ADJUSTMENT_THRESHOLD, _appTrcAspect);
+						submit(_accountBalanceResultTuple, ABR);
+						return;
+					}
+					
+					_eventCnt++;
+					// Let us keep a copy of the most recently received event in a state variable.
+					// This will be used to print the very last tuple that came from the data feeder when
+					// the entire Linear Road processing is completed.
+					assignFrom(_mostRecentlyReceivedEvent, PRE);
+
+					// Display the following for debugging purposes.	
+					// Always print the very first event.
+					// After that, print only once for every 500K events.
+					if ((_eventCnt == 1ul) || ((_eventCnt % 500000ul) == 0ul))  {
+						if (_eventCnt == 1ul) {
+							appTrc(Trace.error, "******* START OF LINEAR ROAD PROCESSING " + 
+								"(expressway = " + (rstring)PRE.expressWayNumber +
+								", direction = " + (rstring)PRE.directionIndicator + ") *******",
+								_appTrcAspect);
+						}
+
+						appTrc(Trace.error, "Event " + (rstring)_eventCnt + "-->" + (rstring)PRE, _appTrcAspect);
+					}
+
+					_loopCnt = 0;
+										
+					// On the very first tuple we receive here, let us initialize the
+					// accident specific lists with -1 to indicate that there are no accidents to begin with.
+					if (_eventCnt == 1ul) {
+						// A very quick run through of the accidents list happens here.
+						while(_loopCnt < 100) {
+							_accidentDetectionTime[_loopCnt] = -1;
+							_accidentClearingTime[_loopCnt] = -1;
+							_loopCnt++;
+						}
+					}
+					
+					// Check for the correctness of the incoming data to safeguard against any 
+					// remote possibility that will make us to use an invalid array index and then crash.
+					if ((PRE.segmentId < 0) || (PRE.segmentId > 99)) {
+						// Bail out of this precarious situation caused by the erroneous data sent by the LR data feeder.
+						appTrc(Trace.debug, "_X_SSSSSSSSSSSSS (Inside PositionReport operator) Invalid segment id received. " +
+							"Skip processing this event: " + (rstring)PRE, _appTrcAspect);
+						_invalidSegmentIdErrorCnt++;
+						return;
+					}
+					
+					int32 currentMinute = PRE.eventTxTimestamp / 60;
+					
+					if ((currentMinute < 0) || (currentMinute > 179)) {
+						// Bail out of this precarious situation caused by the erroneous data sent by the LR data feeder.
+						appTrc(Trace.debug, "_X_TTTTTTTTTTTTTT (Inside PositionReport operator) Invalid eventTxTimestamp received. " +
+							"Skip processing this event: " + (rstring)PRE, _appTrcAspect);
+						_invalidEventTxTimeStampErrorCnt++;
+						return;
+					}					
+					
+					// <<< READJUST THE ACCIDENT CLEARING TIME LIST BASED ON THE CURRENT SIMULATION TIME >>>
+					// 
+					// During the minute in which an accident was cleared in a particular segment, the value
+					// in this list will point to that minute value. Outside of that minute boundary, we should 
+					// simply reset that value to -1.
+					_loopCnt = 0;
+					
+					while(_loopCnt < 100) {
+						if ((_accidentClearingTime[_loopCnt] != -1) && (_accidentClearingTime[_loopCnt] < currentMinute)) {
+							// We crossed beyond the minute in which an accident was cleared in this segment.
+							// Let us reset it.
+							_accidentClearingTime[_loopCnt] = -1;
+						} 
+						
+						_loopCnt++;
+					}
+
+					// <<< DECIDE WHETHER IT IS A NEWLY ARRIVING CAR OR AN ALREADY JOURNEYING CAR ON THIS EXPRESSWAY. >>>
+					//
+					// If the vehicle belonging to the current position report event is already there in our cache, 
+					// that means it was last spotted on this expressway. Let us get a copy of that vehicle info from our local cache.
+					if ((PRE.vehicleId in _vehicleInfoCache) == true) {
+						_vehicleInfoTuple = _vehicleInfoCache[PRE.vehicleId];
+					} else {
+						// It is not there in the cache. Initialize it to empty values.
+						// If a vehicle makes its first appearance on this expressway traveling in this
+						// direction in the exit lane 4, then that is due to a data generation error.
+						// Discard this event immediately without considering it for any of the LR analytics.
+						if (PRE.laneNumber == $EXIT_LANE) {
+							appTrc(Trace.debug, "_X_WWWWWWWWWWWWWW (Inside PositionReport operator) Found a vehicle making its first appearance in the exit lane. " +
+								"Skip processing this event: " + (rstring)PRE, _appTrcAspect);
+							_invalidFirstTimeAppearanceInExitLaneErrorCnt++;
+							return;
+						}
+						
+						// This vehicle will get added into our local cache towards the very end of this tuple processing logic.
+						_vehicleInfoTuple = (VehicleInfoType){};
+						// -1 indicates that this vehicle is making a new entry into this expressway. This value will
+						// help us throughout the code below in distinguishing between an already traveling car in
+						// this expressway versus a newly entered car.
+						_vehicleInfoTuple.lastTraveledSegmentId = -1;
+					}
+				
+					// <<< INITIALIZE THE GLOBALLY ACCESSIBLE ACCOUNT BALANCE RECORD FOR THIS VEHICLE ONLY ONCE AT THE VERY BEGINNING OF THIS APPLICATION RUN. >>>
+					// 
+					// Check if this vehicle is making a new entry into this expressway.
+					// In that case, let us initialize a vehicle info entry in the
+					// DPS if it doesn't exist there already.
+					if (_vehicleInfoTuple.lastTraveledSegmentId == -1) {
+						// We have no record of this vehicle in this expressway's local cache.
+						// Let us check whether it is there in the DPS for global access (that will be made by the Type 2 account balance event)
+						_key = (rstring)PRE.vehicleId + "_balance";
+						_res = dpsHasTTL(_key, _err);
+
+						if (_err != 0ul) {
+							appTrc(Trace.error, "_X_HHHHHHHHHHHHHH (Inside PositionReport operator) Unexpected error in checking the existence of the vehicle info for " + 
+								_key + " at time " + (rstring)PRE.eventTxTimestamp + ". Error code=" +
+								(rstring)dpsGetLastErrorCodeTTL() + ", Error msg=" + 
+								dpsGetLastErrorStringTTL(), _appTrcAspect);
+						} else if (_res == false) {
+							// It is not there in the DPS global store.
+							// Let us initialize a new account balance info entry for this vehicle in the DPS.
+							_accountBalanceTuple.vehicleId = PRE.vehicleId;
+							_accountBalanceTuple.balance = 0;
+							_accountBalanceTuple.mostRecentBalanceUpdateTime = 
+								(PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp));
+                            _res = dpsPutTTL(_key, _accountBalanceTuple, 0u, _err);
+
+                            if (_res == false) {
+                                appTrc(Trace.error, "_X_PPPPPPPPPPPPPP (Inside PositionReport operator) Unexpected error in dpsPutTTL vehicle info for " +
+                                	_key + " at time " + (rstring)PRE.eventTxTimestamp + ". Error code=" + (rstring)dpsGetLastErrorCodeTTL() +
+                                	", Error msg=" + dpsGetLastErrorStringTTL(), _appTrcAspect);
+                            }
+						}
+					}
+
+					// <<< COLLECT SEGMENT STATISTICS. >>>
+					//	
+					// Specification: "Maintain statistics about the number of vehicles and average speed on
+					// each segment of each expressway on a per minute basis for the last 5 minutes."
+					// Let us generate statistics about traffic conditions on every segment of this expressway for every
+					// minute, including average vehicle speed and number of vehicles.
+					// These statistics are used to determine toll charges for variable tolling.
+					// Adjust the vehicle speed, position report cnt and the vehicle id for the current minute's statistics.
+					//					
+					// NOTE:
+					// ----
+					// The LR specification doesn't state clearly about those vehicles that are in the entry or 
+					// exit lanes to be considered in the segment statistics calculation. For the time being,
+					// let us consider the ENTRY_LANE (lane 0) and EXIT_LANE (lane 4) traffic in the
+					// segment statistics along with the traffic from the three travel lanes (1, 2, and 3).
+					_segmentStatistics[PRE.segmentId][currentMinute].totalVehicleSpeed += PRE.vehicleSpeed; 
+					_segmentStatistics[PRE.segmentId][currentMinute].totalPositionReports += 1;
+					// Include the vehicle id into the set belonging to the current minute for the current segment.
+					insertM(_segmentStatistics[PRE.segmentId][currentMinute].vehicleIds, PRE.vehicleId);
+					
+					/*
+					// Sep/24/2015: After discussions with the Walmart team, it was decided not to
+					//              remove an exiting vehicle from the segment statistics.
+					// 
+					// If the current position report says that a vehicle is exiting from this expressway,
+					// let us remove that vehicle from this segment's current minute's vehicleIds set.
+					if (PRE.laneNumber == $EXIT_LANE) {
+						if (PRE.vehicleId in _segmentStatistics[PRE.segmentId][currentMinute].vehicleIds) {
+							removeM(_segmentStatistics[PRE.segmentId][currentMinute].vehicleIds, PRE.vehicleId);
+						}
+					} 
+					*/
+					
+					// Do we really have to keep all the vehicleIds in a set at all times?
+					// Depending on the number of cars simulated by the user, this will eat up a lot of
+					// memory for all the array slots for 180 minutes for 100 segments per expressway per direction.
+					// As an optimization to conserve memory usage, we can run through the minutes in the past and
+					// obtain a single numberOfVehicles int32 value instead of keeping all the vehicleIds in a
+					// set data structure forever inside the PerMinuteSegmentStatistics tuple.
+					_loopCnt = currentMinute - 1;
+					
+					while(_loopCnt >= 0) {
+						// Do this logic only if it has not already been optimized.
+						// This will avoid unnecessary calls to the set collection APIs.
+						if (_segmentStatistics[PRE.segmentId][_loopCnt].numberOfVehicles == 0) {
+							_segmentStatistics[PRE.segmentId][_loopCnt].numberOfVehicles = 
+								size(_segmentStatistics[PRE.segmentId][_loopCnt].vehicleIds);
+							// We now have an int32 value to tell us about the number of vehicles that were
+							// traveling in this segment during a particular minute from the past.
+							// Empty the set to free up memory space.
+							clearM(_segmentStatistics[PRE.segmentId][_loopCnt].vehicleIds);
+						}
+						
+						// Try the other minutes from the past as well.
+						_loopCnt--;
+					}
+
+					// <<< "STOPPED" VEHICLE DETECTION LOGIC. >>
+					//
+					// Check if this vehicle is in the same position where it was spotted before in its previous position report. 
+					// If yes, check whether it is still in that same spot for 4 consecutive position reports.
+					// If that is also an yes, then make it as a "stopped" car and then see if it is involved in an
+					// accident situation. Other possibility to check is whether it was involved in an accident before and 
+					// now it started moving again after that accident was cleared. Perform these somewhat complex checks now.
+					_sizeOfReportedPositions = size(_vehicleInfoTuple.reportedPositions);
+					
+					// For a vehicle making a new entry into this expressway, reportedPositions list will have a size of 0.
+					// The following block of code is not applicable for newly entering vehicles. It is applicable only for
+					// those vehicles that have already been traveling on a given expressway. 
+					if (_sizeOfReportedPositions != 0 && _sizeOfReportedPositions < 4) {
+						// If we are here, this vehicle is not in "Stopped" state at this time.
+						// Check if this vehicle is exiting from this expressway.
+						// In that case, remove its entry from our local cache.
+						if (PRE.laneNumber == $EXIT_LANE) {
+							// If needed, do the toll assessment before it exits.
+							if (_vehicleInfoTuple.lastTraveledSegmentId != PRE.segmentId) {
+								// This position report is being done inside a new segment.
+								// That means we have to do a toll assessment.
+								// Call a function to do that work. We will assess the toll that was informed to this
+								// vehicle when it entered the last traveled segment id.
+								int32 mostRecentBalanceUpdateTime = (PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp));
+								performTollAssessment(PRE.vehicleId, _vehicleInfoTuple.notifiedTollCharge,
+									mostRecentBalanceUpdateTime, _appTrcAspect);
+							}
+
+							// We can remove this vehicle from our local cache now.
+							if (PRE.vehicleId in _vehicleInfoCache) {
+								removeM(_vehicleInfoCache, PRE.vehicleId);
+							}
+							
+							// This is an exiting vehicle. Nothing more to do. We can return now.
+							return;
+						}
+						
+						// Check if this vehicle is in the same position and in the same lane as we recorded from its previous position reports.
+						// MITSIM data generator assigns the same position number even when a vehicle changes lanes. (That is not correct since those
+						// lanes are few feet apart. But, this situation needs to be taken into account as a vehicle movement.)
+						if ((_vehicleInfoTuple.lastTraveledLaneNumber == PRE.laneNumber) && 
+							(_vehicleInfoTuple.reportedPositions[0] == PRE.vehiclePosition)) {
+							// It is in the same lane and in the same position as it was seen before. We are going to add it to the previous positions list.
+							appendM(_vehicleInfoTuple.reportedPositions, PRE.vehiclePosition);
+							_sizeOfReportedPositions++;
+							// Update the local vehicle info cache.
+							insertM(_vehicleInfoCache, PRE.vehicleId, _vehicleInfoTuple);
+							
+							// If it is less than 4 position reports coming from the same location, vehicle is still in the same spot and
+							// potentially heading for a "stopped" state when it reaches the magic number of 4 in the near future. 
+							if (_sizeOfReportedPositions < 4) {
+								// It seems to be standstill at this time and not quite ready for a transition to "stopped" state.
+								// We will return for now.
+								return;
+							}
+						}
+					}
+					
+					// <<< ACCIDENT DETECTION LOGIC. >>>
+					//
+					if ((_sizeOfReportedPositions >= 4) &&
+						(_vehicleInfoTuple.lastTraveledLaneNumber == PRE.laneNumber) && 
+						(_vehicleInfoTuple.reportedPositions[0] == PRE.vehiclePosition)) {
+						// Specification: "A vehicle is considered stopped if four consecutive position reports from this vehicle come from 
+						// the same position (i.e. the same expressway, lane, position and direction)."
+						// This vehicle is officially now in "stopped" state.
+						// Let us see if this car was already registered as "stopped". If not, register it.
+						// Let us also ensure that accident if any at this vehicle's "stopped" location is detected properly.
+						rstring mapKey = (rstring)PRE.laneNumber + (rstring)PRE.vehiclePosition;
+						mutable set<int32> stoppedCars = {};
+						
+						if (mapKey in _stoppedCars) {
+							// Get the existing set of cars stopped at this lane and position.
+							stoppedCars = _stoppedCars[mapKey];
+						}
+						
+						// Register this car as "stopped" by adding it to the set of stopped cars.
+						insertM(stoppedCars, PRE.vehicleId);
+						// Put it back into the map.
+						insertM(_stoppedCars, mapKey, stoppedCars);
+						
+						// Specification: "An accident occurs when two or more vehicles are "stopped" at 
+						// the same lane and position at the same time."
+						// See if there are two or more cars stopped at this lane+position.
+						// If yes, set the accident flag for this segment.
+						if (size(stoppedCars) >= 2) {
+							// Don't try to set the accident flag if it already indicates an existing accident status with a non -1 value.
+							// In that case, it already points to the minute at which the accident was first detected. Don't alter that value.
+							if (_accidentDetectionTime[PRE.segmentId] == -1) {
+								// It is a new accident getting detected at this position of the current segment.
+								// Let us indicate the minute at which this accident was detected.
+								_accidentDetectionTime[PRE.segmentId] = currentMinute;
+								// Since there is an active accident at this location, let us reset the accident clearing flag for this segment.
+								_accidentClearingTime[PRE.segmentId] = -1; 
+								
+								///// ***** DEBUG ME *****
+								// Uncomment the following and make the necessary changes for debugging the
+								// accident detection situation in a particular segment. 
+								/*
+								if (PRE.segmentId == 6 && PRE.expressWayNumber == 1 && PRE.directionIndicator == 0) {
+									appTrc(Trace.error, "_X_A-DETECT-East-Seg6-->" + (rstring)_eventCnt + "-->" +
+										(rstring)_vehicleInfoTuple + "-->" + (rstring)PRE + "-->" +
+										(rstring)stoppedCars + "-->" + 
+										(rstring)_accidentDetectionTime[PRE.segmentId] +
+										"-->" + (rstring)_accidentClearingTime[PRE.segmentId],
+										_appTrcAspect);
+								}
+								*/
+							}
+						}
+						
+						// Since it is a stopped car, nothing more to do here.
+						return;
+					}
+					
+					// <<< ACCIDENT CLEARING LOGIC. >>>
+					//
+					if ((_sizeOfReportedPositions >= 4) && 
+						((_vehicleInfoTuple.lastTraveledLaneNumber != PRE.laneNumber) || (_vehicleInfoTuple.reportedPositions[0] != PRE.vehiclePosition))) {
+						// MITSIM data generator assigns the same position number even when a vehicle changes lanes. (That is not correct since those
+						// lanes are few feet apart. But, this situation needs to be taken into account as a vehicle movement.)
+						// Either a lane change or a position change is considered as "vehicle in movement and not in stopped condition".
+						// This vehicle was previously in "stopped" state and it may have been involved in an accident as well.
+						// Move it out of the "stopped" state. Since it is moving away from "stopped" state, reset the
+						// accident flag for this segment if this car was also involved in an accident in addition to being stopped for a while.
+						//
+						// IMPORTANT: Use the last traveled lane number and last reported position number.  Don't use the currently reported values.
+						rstring mapKey = (rstring)_vehicleInfoTuple.lastTraveledLaneNumber + (rstring)_vehicleInfoTuple.reportedPositions[0];
+
+						// Remove this vehicle id from the stoppedCars set.
+						if (mapKey in _stoppedCars) {
+							mutable set<int32> stoppedCars = _stoppedCars[mapKey];
+
+							if (PRE.vehicleId in stoppedCars) {
+								removeM(stoppedCars, PRE.vehicleId);
+							}
+							
+							// If there is no more stopped car in the set, let us remove the entire map entry for this lane+position.
+							if (size(stoppedCars) <= 0) {
+								removeM(_stoppedCars, mapKey);
+							} else {
+								// There are additional stopped cars in this same location. That means there was an accident here that
+								// is getting cleared right now due to the movement of one of the cars involved in that accident.
+								// Other cars involved in that accident will get removed when those vehicles emit their next position report.
+								// Put it back in the map.
+								// NOTE: The accident clearing logic done below will work very well if there were only two cars that got involved in the accident.
+								//       If there are more than two cars involved in that accident, then we hope those other cars
+								//       will report a new position soon so that their ids will be properly removed on time from this set. 
+								insertM(_stoppedCars, mapKey, stoppedCars);
+								
+								// After removing one of the cars from the stopped cars set, if we still have multiple cars remaining
+								// in the set, then that indicates more than two cars collided in that accident.
+								if (size(stoppedCars) > 1) {
+									// This means there were more than two cars involved in this accident that is clearing up now.
+									// If these vehicles linger around in that same spot for a longer time, then we will mistakenly 
+									// flag this as another accident at a later time. Let us log this anomaly to see if such things ever happen.
+									// If it happens, then we have to take care of it later by adding new code.
+									appTrc(Trace.debug, 
+										"_X_MMMMMMMMMMMMMMMMM (Inside PositionReport operator) Detected more than two cars involved in an accident. " +
+                                		"A list of cars still remaining after resetting that accident: " + 
+                                		(rstring)stoppedCars, _appTrcAspect);
+                                	_moreThanTwoCarsInAnAccidentCnt++;	
+								}
+								
+								// Specification: "After either of the vehicles emits a position report that reveals that it has moved 
+								// from the site of the accident, the accident is assumed to be cleared."
+								//
+								// Going by the above-mentioned statement, even if one car moves out of the "stopped" state,
+								// we can now declare this "lane+position" as accident free.
+								//
+								if (_accidentDetectionTime[_vehicleInfoTuple.lastTraveledSegmentId] != -1) {
+									// Let us set the accident clearing time which is needed in the logic that appears at the
+									// bottom of this operator code to make a decision about when to send accident alert notifications.
+									// IMPORTANT: Set the accident clearing time only if the accident is cleared after the
+									// accident detection time. Due to data generation errors, if the accident detection and
+									// the accident clearing happen in the very same minute or within a span of a minute, then
+									// that is not correct. We will do some defensive coding to ignore such conditions.
+									// That means there should be at least a minute of time difference between accident detection and clearing.
+									if ((_accidentDetectionTime[_vehicleInfoTuple.lastTraveledSegmentId] + 1) <= currentMinute) {
+										_accidentClearingTime[_vehicleInfoTuple.lastTraveledSegmentId] = currentMinute;
+									} else {
+										// If the accident is getting cleared in the very same minute or within a span of a
+										// minute from when that accident was detected, it is a spurious data generation error.
+										// Let us ignore such cases by not setting the accident clearing time.
+										_accidentClearingTime[_vehicleInfoTuple.lastTraveledSegmentId] = -1;
+									}
+
+									// Clear the accident for this vehicle's last traveled segment id
+									// (Don't use this vehicle's current segment id since it may have moved to a 
+									//  new segment that is different from where it reported last about its stopped position.]
+									_accidentDetectionTime[_vehicleInfoTuple.lastTraveledSegmentId] = -1;
+									
+									///// ***** DEBUG ME *****
+									// Uncomment the following and make the necessary changes for debugging the
+									// accident clearing situation in a particular segment.
+									/*
+									if (_vehicleInfoTuple.lastTraveledSegmentId == 6 &&
+										PRE.expressWayNumber == 1 && PRE.directionIndicator == 0) {
+										appTrc(Trace.error, "_X_A-CLEAR-East-Seg6-->" + (rstring)_eventCnt + "-->" +
+											(rstring)_vehicleInfoTuple + "-->" + (rstring)PRE + "-->" + 
+											(rstring)stoppedCars + "-->" + 
+											(rstring)_accidentDetectionTime[_vehicleInfoTuple.lastTraveledSegmentId] +
+											"-->" + (rstring)_accidentClearingTime[_vehicleInfoTuple.lastTraveledSegmentId],
+											_appTrcAspect);
+									}
+									*/
+								}
+							}
+						}
+
+						// Check if this vehicle is exiting from this expressway after resuming from its "stopped" state.
+						// In that case, remove its entry from our local cache.
+						if (PRE.laneNumber == $EXIT_LANE) {
+							// If needed, do the toll assessment before it exits.
+							if (_vehicleInfoTuple.lastTraveledSegmentId != PRE.segmentId) {
+								// This position report is being done inside a new segment.
+								// That means we have to do a toll assessment.
+								// Call a function to do that work. We will assess the toll that was informed to this
+								// vehicle when it entered the last traveled segment id i.e. its previous segment.
+								int32 mostRecentBalanceUpdateTime = (PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp));
+								performTollAssessment(PRE.vehicleId, _vehicleInfoTuple.notifiedTollCharge,
+									mostRecentBalanceUpdateTime, _appTrcAspect);
+							}
+							
+							// We can remove this vehicle from our local cache now.
+							if (PRE.vehicleId in _vehicleInfoCache) {
+								removeM(_vehicleInfoCache, PRE.vehicleId);
+							}
+							
+							// This is an exiting vehicle. Nothing to do. We can return now.
+							return;
+						}						
+					}
+
+					// If the code execution reaches here, that means this vehicle is no longer in stopped state.
+					// We may want to prune the previous positions list if needed so that it can be populated again later with its new current position.
+					// If the list size is 1, leave it alone without clearing it.
+					if (size(_vehicleInfoTuple.reportedPositions) > 1) {
+						clearM(_vehicleInfoTuple.reportedPositions);
+						// Add a single list element to store the new current position later in the logic below at the very bottom of this code block.
+						appendM(_vehicleInfoTuple.reportedPositions, -1);
+					}
+										
+					// <<< PERFORM TOLL NOTIFICATION >>>
+					// Specification: "A position report triggers a toll notification if it reports that a
+					// given vehicle is in a new segment since the last position report, but not in an exit lane.
+					// Every time a vehicle issues its first position report from a segment, a toll for that
+					// segment is calculated and the vehicle is notified of that toll."
+					//
+					// Initialize it to -1 so that at the end of this tuple processing logic we can know
+					// whether a new toll charge was notified or not by checking this variable.
+					// Towards the end of this tuple processing logic, it will remain -1 if there was no
+					// new toll notification or it will change to non -1 value if there was a new toll notification.
+					_notifiedTollCharge = -1;
+					mutable boolean accidentAhead = false;
+					mutable int32 segmentId = 0;
+					
+					// This vehicle is either journeying already on this expressway (OR)
+					// it has just now entered the expressway and sending its first position report.
+					// i.e. This if condition will also satisfy any newly entered vehicle with its
+					// lastTraveledSegmentId set to -1.
+					// Let us see if toll calculation and notification will be needed.
+					if (_vehicleInfoTuple.lastTraveledSegmentId != PRE.segmentId) {
+						// This position report is being done inside a new segment.
+						// Let us calculate the new toll for this vehicle in its new segment.
+						// If there is an accident ahead of this vehicle, there is no toll charge.
+						// Specification: "The toll calculation is done for a new segment
+						// unless an accident was detected 0-4 segments downstream
+						// of this segment at this time. In this case, no toll is charged.
+						accidentAhead = false;
+						mutable float64 averageSpeed = 0.0;
+						int32 eventEmittedMinute = currentMinute;
+						segmentId = PRE.segmentId;
+						_loopCnt = 0;
+						if (PRE.directionIndicator == 0) {
+							// Eastbound lanes with increasing segment ids.
+							// Check the 0-4 downstream segments i.e. current segment and the next four.
+							while(++_loopCnt <= 5) {
+								// We are going to follow the same rules here as the ones used for the
+								// type 1 accident alert notifications.
+								int32 minuteOfAccidentDetection = _accidentDetectionTime[segmentId];
+								
+								if ((minuteOfAccidentDetection != -1) && (eventEmittedMinute >= minuteOfAccidentDetection+1)) {
+									accidentAhead = true;
+									break;
+								}
+
+								int32 minuteOfAccidentClearing = _accidentClearingTime[segmentId];
+								
+								// If the accident got cleared during the current minute, we should still flag this as an accident that is ahead of this car.
+								if ((minuteOfAccidentDetection == -1) && (minuteOfAccidentClearing != -1) && 
+									(eventEmittedMinute == minuteOfAccidentClearing)) {
+									accidentAhead = true;
+									break;
+								}								
+								
+								if (++segmentId > 99) {
+									// We are at the end of the expressway.
+									break;
+								}
+							}
+						} else {
+							// Westbound lanes with decreasing segment ids.
+							// Check the 0-4 downstream segments i.e. current segment and the next four.
+							while(++_loopCnt <= 5) {
+								// We are going to follow the same rules here as the ones used for the
+								// type 1 accident alert notifications.
+								int32 minuteOfAccidentDetection = _accidentDetectionTime[segmentId];
+								
+								if ((minuteOfAccidentDetection != -1) && (eventEmittedMinute >= minuteOfAccidentDetection+1)) {
+									accidentAhead = true;
+									break;
+								}
+
+								int32 minuteOfAccidentClearing = _accidentClearingTime[segmentId];
+								
+								// If the accident got cleared during the current minute, we should still flag this as an accident that is ahead of this car.
+								if ((minuteOfAccidentDetection == -1) && (minuteOfAccidentClearing != -1) && 
+									(eventEmittedMinute == minuteOfAccidentClearing)) {
+									accidentAhead = true;
+									break;
+								}	
+																
+								if (--segmentId < 0) {
+									// We are at the end of the expressway.
+									break;
+								}
+							}							
+						}
+						
+						// Calculate the toll. (Slightly involved logic that will take a few readings to get a correct understanding.)
+						// Specification: 
+						// (i) From the classic CQL paper.
+						// "Vehicles pay a toll whenever they drive in a congested
+						// segment, while no toll is charged for uncongested segments. A segment is
+						// congested if the average speed of all vehicles in the segment over the
+						// last 5 min is less than 40 miles per hour (mph). The toll for a 
+						// congested segment is given by the formula 2 × (( numvehicles - 50 ) ^ 2),
+						// where numvehicles is the number of vehicles currently in the segment.
+						// Note that the toll for a congested segment changes dynamically as vehicles
+						// enter and leave the segment."
+						//
+						// (ii) From the Linear Road paper.
+						// "By default, the value of Toll at time t for a segment is based on the 
+						// average speed in the previous 5 minutes and number of vehicles reporting
+						// from the segment during minute M(t)-1. Specifically, if the average speed
+						// for the time interval from minute M(t)-5 to M(t)-1 is greater than or 
+						// equal to 40 MPH, or if the number of vehicles on the segment (numvehicles)
+						// was 50 or less during minute M(t)-1, no toll is assessed. Otherwise, 
+						// the default toll is determined by the formula, 2 × ((numvehicles - 50) ^ 2).
+						// The basic intuition is to raise tolls when congestion is high so as to
+						// discourage drivers from contributing to worsen the congestion.
+						// The toll calculation described above is issued for segment s unless 
+						// an accident was detected 0-4 segments downstream of current segment as of 
+						// minute M(t). In this case, no toll is charged."
+						//							
+						// Calculate the average speed for the prior five minute periods.
+						mutable int32 totalVehicleSpeed = 0;
+						mutable int32 totalPositionReports = 0;
+						mutable int32 numberOfVehicles = 0;
+						_loopCnt = 0;
+						mutable int32 minuteIdx = currentMinute;
+						
+						// Calculate the average speed by using the segment statistics from the prior 5 minutes. 
+						// NOTE: During the first 5 minutes of the application run, we may only have partial information to
+						// calculate the average speed since not enough traffic statistics have yet been collected.
+						while(++_loopCnt <= 5) {
+							minuteIdx--;
+							
+							if (minuteIdx < 0) {
+								// Outside the bounds of the list with negative index.
+								break;
+							} else {								
+								totalVehicleSpeed += _segmentStatistics[PRE.segmentId][minuteIdx].totalVehicleSpeed;
+								totalPositionReports += _segmentStatistics[PRE.segmentId][minuteIdx].totalPositionReports;
+								
+								///// ***** DEBUG ME *****
+								// Uncomment the following code block and two more code blocks in the next page to
+								// log the data points involved in calculating the LAV (Latest Average Velocity) and 
+								// the number of vehicles in the previous minute. Change the minute, xway number and
+								// direction indicator to suit your debugging needs.
+								/*
+								if ((currentMinute == 170) && 
+									(PRE.expressWayNumber == 1) && (PRE.directionIndicator == 0)) {
+									appTrc(Trace.error, "_X_LAVLAVLAV min=" + (rstring)minuteIdx + 
+										", vid=" + (rstring)PRE.vehicleId +
+										", xway=" + (rstring)PRE.expressWayNumber + 
+										", did=" + (rstring)PRE.directionIndicator + 
+										", seg=" + (rstring)PRE.segmentId + 
+										", speed=" + (rstring)_segmentStatistics[PRE.segmentId][minuteIdx].totalVehicleSpeed +
+										", reportCnt=" + (rstring)_segmentStatistics[PRE.segmentId][minuteIdx].totalPositionReports +
+										", total speed=" + (rstring)totalVehicleSpeed +
+										", total reportCnt=" + (rstring)totalPositionReports, _appTrcAspect);
+								}
+								*/
+							} 
+						}
+						
+						// NOTE: During the very first minute of the application, there is no history about m(t) - 1.
+						// Hence, all those cars entering the expressway during that very first minute will get 
+						// notified with a toll charge of 0. Because, the system is still warming up.
+						minuteIdx = currentMinute;
+						// Get the number of vehicles that were there in this segment during the previous minute.
+						if (--minuteIdx >= 0) {
+							numberOfVehicles = _segmentStatistics[PRE.segmentId][minuteIdx].numberOfVehicles;
+						}
+						
+						// Avoid the divide by zero error.
+						if (totalPositionReports > 0) {
+							averageSpeed = (float64)totalVehicleSpeed / (float64)totalPositionReports;
+						}
+						
+						// Now apply the toll calculation rule.
+						if (round(averageSpeed) >= (float64)40 || numberOfVehicles <= 50) {
+							// Traffic is moving smoothly. No congestion and no tolls.
+							_notifiedTollCharge = 0;
+						} else {
+							// Apply the default formula.
+							_notifiedTollCharge = 2 * (numberOfVehicles - 50) * (numberOfVehicles - 50);
+						}
+						
+						///// ***** DEBUG ME *****
+						// Uncomment the following code block and another code block in the previous page along with
+						// a third code block in the next if statement below to log the data points involved in calculating
+						// the LAV (Latest Average Velocity) and the number of vehicles in the previous minute.
+						// Change the minute, xway number and direction indicator to suit your debugging needs.
+						/*
+						if ((currentMinute == 170) && 
+							(PRE.expressWayNumber == 1) && (PRE.directionIndicator == 0)) {
+							appTrc(Trace.error, "_X_LAVLAVLAV vid=" + (rstring)PRE.vehicleId +
+								", numv=" + (rstring)numberOfVehicles +
+								", lav=" + (rstring)round(averageSpeed) + 
+								", toll=" + (rstring)_notifiedTollCharge, _appTrcAspect);
+						}
+						*/
+						
+						// Any active accident ahead will override the calculated toll charge by nullifying it.
+						if (accidentAhead == true) {
+							// There is no toll for this vehicle in this segment because of accident ahead.
+							_notifiedTollCharge = 0;
+							
+							///// ***** DEBUG ME *****
+							// Uncomment the following code block and another code block in the previous paragraph along with
+							// a third code block in the previous page to log the data points involved in calculating
+							// the LAV (Latest Average Velocity) and the number of vehicles in the previous minute.
+							// Change the minute, xway number and direction indicator to suit your debugging needs.
+							/*
+							if ((currentMinute == 170) && 
+								(PRE.expressWayNumber == 1) && (PRE.directionIndicator == 0)) {
+								appTrc(Trace.error, "_X_ACCACCACCACC vid=" + (rstring)PRE.vehicleId + ", accidentSegment=" + (rstring)segmentId +
+									", accidentDetectionTime=" + (rstring)_accidentDetectionTime[segmentId] +
+									", accidentClearingTime=" + (rstring)_accidentClearingTime[segmentId], _appTrcAspect);
+							}
+							*/
+						}						
+						
+						// Send this toll notification now.
+						// Sometimes, customers may want us to include additional fields in the output CSV string.
+						// In that case, they will have their own LR validator. We have a switch that tells us whether
+						// we want to stricty adhere to the LR specification result format or not.
+						// That switch lets us output the result in one of those two ways.
+						if (_produceResultsStrictlyForLRSpecification == true) {
+							// Type 0: (type, carid, time, emit, LAV, toll) 
+							_oTuple.line =  (rstring)PRE.eventType + "," + (rstring)PRE.vehicleId + 
+								"," + (rstring)PRE.eventTxTimestamp + "," + 
+								(rstring)(PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp)) +
+								"," + (rstring)round(averageSpeed) + "," + (rstring)_notifiedTollCharge;
+						} else {
+							// Type 0: (type, carid, time, emit, LAV, toll)
+							// [As you can notice, there is no customer specific change at this time. Both are the same.] 
+							_oTuple.line =  (rstring)PRE.eventType + "," + (rstring)PRE.vehicleId + 
+								"," + (rstring)PRE.eventTxTimestamp + "," + 
+								(rstring)(PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp)) +
+								"," + (rstring)round(averageSpeed) + "," + (rstring)_notifiedTollCharge;
+						}
+						
+						submit(_oTuple, TN);
+					}
+					
+					// <<< PERFORM TOLL ASSESSMENT >>>
+					// Specification: "Every time a position report identifies a vehicle as crossing
+					// from one segment into the next, the toll charge quoted to the vehicle 
+					// when it first entered the segment that it is now leaving is assessed to the vehicle's account."
+					// Let us see if we need to do a toll assessment for the current vehicle.
+					// NOTE: As a reminder, lastTraveledSegmentId is set to -1 for a vehicle that has just now made a 
+					// new entry into this expressway and that vehicle will be exempt from a toll assessment.
+					if ((_vehicleInfoTuple.lastTraveledSegmentId != -1) && 
+						(_vehicleInfoTuple.lastTraveledSegmentId != PRE.segmentId)) {
+						// This position report is being done inside a new segment.
+						// That means we have to do a toll assessment.
+						// Call a function to do that work. We will assess the toll that was informed to this
+						// vehicle when it entered the last traveled segment id i.e. previous segment.
+						int32 mostRecentBalanceUpdateTime = (PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp));
+						performTollAssessment(PRE.vehicleId, _vehicleInfoTuple.notifiedTollCharge,
+							mostRecentBalanceUpdateTime, _appTrcAspect);
+					}
+					
+					// <<< ACCIDENT ALERT NOTIFICATION >>>
+					// Specification: "Once an accident is detected, every vehicle that enters into a segment 
+					// in the vicinity of the accident must be notified so that these 
+					// vehicles have the opportunity to exit the expressway and avoid the resulting congestion.
+					// Notify a vehicle entering a segment 0 to 4 segments upstream of some accident location, but only
+					// if the position report was emitted no earlier than the minute following the minute when the
+					// accident occurred, and no later than the minute the accident is cleared."
+					//
+					// This vehicle is either journeying already on this expressway (OR)
+					// it has just now entered the expressway and sending its first position report.
+					// i.e. This if condition will also satisfy any newly entered vehicle with its
+					// lastTraveledSegmentId set to -1.
+					if (_vehicleInfoTuple.lastTraveledSegmentId != PRE.segmentId) {
+						// This position report is being done inside a new segment.
+						// Let us see if there are accidents ahead and accident alerts will be needed.
+						int32 eventEmittedMinute = currentMinute;
+						accidentAhead = false;
+						segmentId = PRE.segmentId;
+						_loopCnt = 0;
+						if (PRE.directionIndicator == 0) {
+							// Eastbound lanes with increasing segment ids.
+							// Check the 0-4 downstream segments i.e. current segment and the next four.
+							while(++_loopCnt <= 5) {
+								int32 minuteOfAccidentDetection = _accidentDetectionTime[segmentId];
+								if ((minuteOfAccidentDetection != -1) && (eventEmittedMinute >= minuteOfAccidentDetection+1)) {
+									accidentAhead = true;
+									break;
+								}
+								
+								int32 minuteOfAccidentClearing = _accidentClearingTime[segmentId];
+								
+								// If the accident got cleared during the current minute, we should still send the accident alert notification.
+								if ((minuteOfAccidentDetection == -1) && (minuteOfAccidentClearing != -1) && 
+									(eventEmittedMinute == minuteOfAccidentClearing)) {
+									accidentAhead = true;
+									break;
+								}
+								
+								if (++segmentId > 99) {
+									// We are at the end of the expressway.
+									break;
+								}
+							}
+						} else {
+							// Westbound lanes with decreasing segment ids.
+							// Check the 0-4 downstream segments i.e. current segment and the next four.
+							while(++_loopCnt <= 5) {
+								int32 minuteOfAccidentDetection = _accidentDetectionTime[segmentId];
+								if ((minuteOfAccidentDetection != -1) && (eventEmittedMinute >= minuteOfAccidentDetection+1)) {
+									accidentAhead = true;
+									break;
+								}
+								
+								int32 minuteOfAccidentClearing = _accidentClearingTime[segmentId];
+								
+								// If the accident got cleared during the current minute, we should still send the accident alert notification.
+								if ((minuteOfAccidentDetection == -1) && (minuteOfAccidentClearing != -1) && 
+									(eventEmittedMinute == minuteOfAccidentClearing)) {
+									accidentAhead = true;
+									break;
+								}
+								
+								if (--segmentId < 0) {
+									// We are at the end of the expressway.
+									break;
+								}
+							}							
+						}
+						
+						if (accidentAhead == true) {
+							// We can send the accident alert now.
+							// LR specification asks the alerts to be in a different format: (type, time, emit, seg)
+							// But, the customer who evaluated the IBM Streams product in Aug/2015 wanted it in a diferent format:
+							// (type, time, emit, xway, seg, dir, carid) 
+							// We have a switch that lets us output the result in one of those two ways.
+							if (_produceResultsStrictlyForLRSpecification == true) {
+								// Type1: (type, time, emit, seg)
+								_oTuple.line =  "1," + (rstring)PRE.eventTxTimestamp + "," + 
+									(rstring)(PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp)) +
+									"," + (rstring)segmentId;
+							} else {
+								// Type1: (type, time, emit, xway, seg, dir, carid) 
+								_oTuple.line =  "1," + (rstring)PRE.eventTxTimestamp + "," + 
+									(rstring)(PRE.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - PRE.eventRxTimestamp)) +
+									"," + (rstring)PRE.expressWayNumber + "," + (rstring)segmentId +
+									"," + (rstring)PRE.directionIndicator + "," + (rstring)PRE.vehicleId;
+							}
+									
+							submit(_oTuple, AA);
+						}
+					}
+					
+					// ********* WE ARE DONE WITH EVERYTHING NEEDED IN ORDER TO PROCESS A POSITION REPORT ********* 
+					// Only thing left to do is to update the vehicle info tuple with the
+					// newly received values in the position report and then insert it into our local cache.
+					_vehicleInfoTuple.lastTraveledSegmentId = PRE.segmentId;
+					_vehicleInfoTuple.lastTraveledLaneNumber = PRE.laneNumber;
+					
+					if (size(_vehicleInfoTuple.reportedPositions) <= 0) {
+						// Create a new list element to store its current position.
+						// This condition is true for a vehicle that has just now entered the
+						// expressway and made its first position report on a new journey.
+						// In that case, the size of the reportedPosition list will be zero since
+						// this is the first ever position report for this vehicle's new journey.
+						appendM(_vehicleInfoTuple.reportedPositions, PRE.vehiclePosition);
+					} else {
+						// This vehicle has been on this expressway for a while and has reported its
+						// positions before. Hence, we have a non-empty reportedPosition list.
+						// We can assign this new position information to an existing first element of that list.
+						_vehicleInfoTuple.reportedPositions[0] = PRE.vehiclePosition;
+					}
+					
+					// IMPORTANT
+					// ---------
+					// Change the existing notified toll charge for this vehicle only if a new toll
+					// notification was sent above. That would have happened only when this vehicle
+					// is currently found to be in a new segment. If it is still traveling in the
+					// same segment, let us not change the toll charge it was already notified for
+					// traveling in the current segment.
+					if (_notifiedTollCharge != -1) {
+						_vehicleInfoTuple.notifiedTollCharge = _notifiedTollCharge;
+					}
+					// Insert/Update this into our local vehicle info cache.
+					insertM(_vehicleInfoCache, PRE.vehicleId, _vehicleInfoTuple);					
+				} // End of onTuple PRE
+				
+				onTuple TS: {
+					// Let us see if the entire processing had ended so that we can print a closing line in the log file.
+					if ((_eventCnt <= 0ul) || (_linearRoadProcessingEnded == true)) {
+						// If the application run has not even started, nothing to do here and simply return back.
+						// Do the same thing when the linear road processing had already ended.
+						return;
+					}
+					
+					if (_lastKnownEventCnt < _eventCnt) {
+						// Linear road processing is actively in progress. Let us keep it going.
+						_lastKnownEventCnt = _eventCnt;
+					} else if (_lastKnownEventCnt == _eventCnt) {
+						// Event count has not changed since we last visited here.
+						// That means, Linear Road processing must have ended.
+						// Let us print the final message in the PE log.
+						appTrc(Trace.error, "Event " + (rstring)_eventCnt + "-->" + (rstring)_mostRecentlyReceivedEvent, _appTrcAspect);
+						appTrc(Trace.error, "Expressway data routing error count = " + (rstring)_expresswayRoutingErrorCnt, _appTrcAspect);
+						appTrc(Trace.error, "Invalid segment id error count = " + (rstring)_invalidSegmentIdErrorCnt, _appTrcAspect);
+						appTrc(Trace.error, "Invalid event tx timestamp error count = " + (rstring)_invalidEventTxTimeStampErrorCnt, _appTrcAspect);
+						appTrc(Trace.error, "First time appearance in exit lane error count = " + (rstring)_invalidFirstTimeAppearanceInExitLaneErrorCnt, _appTrcAspect);
+						appTrc(Trace.error, "More than two cars in an accident occurrence count = " + (rstring)_moreThanTwoCarsInAnAccidentCnt, _appTrcAspect);
+						appTrc(Trace.error, "******* END OF LINEAR ROAD PROCESSING " + 
+							"(expressway = " + (rstring)_mostRecentlyReceivedEvent.expressWayNumber +
+							", direction = " + (rstring)_mostRecentlyReceivedEvent.directionIndicator + ") *******", _appTrcAspect);
+						_linearRoadProcessingEnded = true;
+					} 
+				}		
+		}
+}
+
+// Define an SPL function to do the toll assessment for a given vehicle.
+public stateful void performTollAssessment(int32 vehicleId, int32 notifiedTollCharge,
+	int32 mostRecentBalanceUpdateTime, rstring appTrcAspect) {
+	// We are going to read the current balance for the given vehicle from the DPS store.
+	// Then, we will adjust that value and update it in the DPS store.
+	mutable rstring key = (rstring)vehicleId + "_balance";
+	mutable AccountBalanceType accountBalanceTuple = (AccountBalanceType){};
+	mutable uint64 err = 0ul;
+	mutable boolean res = dpsGetTTL(key, accountBalanceTuple, err);
+
+	if (res == false) {
+		appTrc(Trace.error, "_X_GGGGGGGGGGGG (Inside performTollAssessment function) Unexpected error in reading the account balance amount for " +
+			key + ". Error code=" + (rstring)dpsGetLastErrorCodeTTL() + 
+			", Error msg=" + dpsGetLastErrorStringTTL(), appTrcAspect);
+	}	
+	
+	// We got the account balance. Let us update it in the DPS now.
+	accountBalanceTuple.balance += notifiedTollCharge;
+	accountBalanceTuple.mostRecentBalanceUpdateTime = mostRecentBalanceUpdateTime;
+	res = dpsPutTTL(key, accountBalanceTuple, 0u, err);
+	
+	if (res == false) {
+		appTrc(Trace.error, "_X_PPPPPPPPPPPPPP (Inside performTollAssessment function) Unexpected error in dpsPutTTL vehicle info for " + key + 
+			". Error code=" + (rstring)dpsGetLastErrorCodeTTL() + ", Error msg=" + dpsGetLastErrorStringTTL(), appTrcAspect);
+	}
+}
+
+// Define an SPL function to get the current account balance for a given vehicle.
+public stateful void getCurrentAccountBalance(LinearRoadEventType lrEventTuple,
+	mutable AccountBalanceResultType abrTuple,
+	int32 accountBalanceUpdateTimeAdjustmentThreshold,
+	rstring appTrcAspect) {
+	mutable int32 accountBalanceAmount = -1;
+	mutable int32 mostRecentBalanceUpdateTime = -1;
+	mutable rstring key = "";
+	mutable uint64 err = 0ul;
+	mutable rstring msg = "";
+	mutable boolean res = false;
+	mutable AccountBalanceType accountBalanceTuple = {};
+	
+	// Specification: "Return the account balance for a vehicle which is the sum of all tolls assessed as of the time of the type 2 request."
+	// Let us get the current account balance for a given vehicle from the globally accessible DPS TTL store.
+	key = (rstring)lrEventTuple.vehicleId + "_balance";
+	res = dpsGetTTL(key, accountBalanceTuple, err);
+
+	if (res == true) {
+		// We got the account balance.
+		accountBalanceAmount = accountBalanceTuple.balance;
+		mostRecentBalanceUpdateTime = accountBalanceTuple.mostRecentBalanceUpdateTime;
+	} else {
+		err = dpsGetLastErrorCodeTTL();
+		msg = dpsGetLastErrorStringTTL();
+		appTrc(Trace.error, "_X_GGGGGGGGGGGG (Inside getCurrentAccountBalance function) Unexpected error in reading the account balance amount for " +
+			key + " at time " + (rstring)lrEventTuple.eventTxTimestamp + ". Error code=" + (rstring)err + 
+			", Error msg=" +  msg + ", Incoming Account Balance Event=" + (rstring)lrEventTuple, appTrcAspect);
+	}					
+
+	abrTuple.eventType = lrEventTuple.eventType;
+	abrTuple.eventTxTimestamp = lrEventTuple.eventTxTimestamp;
+	abrTuple.resultEmitTimestamp = (lrEventTuple.eventTxTimestamp + (int32)(getSeconds(getTimestamp()) - lrEventTuple.eventRxTimestamp));
+	abrTuple.queryId = lrEventTuple.queryId;
+	abrTuple.vehicleId = lrEventTuple.vehicleId;
+	abrTuple.balance = accountBalanceAmount;
+	abrTuple.mostRecentBalanceUpdateTime = mostRecentBalanceUpdateTime;
+	
+	// Sometimes, there will be a type 0 position report event resulting in a segment transition warranting a toll assessment which
+	// immediately will be followed by a type 2 account balance request event. In this case, the actual update of the account balance
+	// may take a few scanty seconds to finish after the arrival of the type 2 account balance request event. If these two times are
+	// very close to each other (e-g: 2 seconds apart), let us adjust the most recent balance update time to the type 2 
+	// eventTxTimestamp so that we will not be flagged for result time violation by the Python validation script.
+	if ((mostRecentBalanceUpdateTime > lrEventTuple.eventTxTimestamp) &&
+		((mostRecentBalanceUpdateTime - lrEventTuple.eventTxTimestamp) <= accountBalanceUpdateTimeAdjustmentThreshold)) {
+		abrTuple.mostRecentBalanceUpdateTime = lrEventTuple.eventTxTimestamp;	
+	}
+}

@@ -1,0 +1,295 @@
+/*
+==================================================================================
+                       RACING IBM STREAMS ON LINEAR ROAD
+                       *********************************
+This file contains the IBM Streams code for loading the historical data
+needed to perform the Linear Road scenario which offers one particular method to
+evaluate a Streaming Middleware product by measuring its key performance indicators.
+
+In order to understand the code below, one should have a good grounding in
+the imaginary scenario on which the Linear Road is based upon.
+If necessary, please read about that first before proceeding with the code below.
+
+http://www.cs.brandeis.edu/~linearroad/ 
+
+First created on: Aug/19/2015
+Last modified on: Sep/02/2015
+==================================================================================
+*/
+namespace com.ibm.streamsx.lr.history;
+
+use com.ibm.streamsx.lr.common::*;
+// Let us use the DPS toolkit namespaces here.
+use com.ibm.streamsx.lock.distributed::*;
+use com.ibm.streamsx.store.distributed::*;
+
+composite HistoricalDataLoader {
+	param
+		// expression<rstring> $TOLL_HISTORY_FILE_NAME : getSubmissionTimeValue("TollHistoryFile", "/datadrive2/lr-input/Walmart-Test-Data/1xway/ten-minutes-test-historical-tolls.out"); 
+		expression<rstring> $TOLL_HISTORY_FILE_NAME : getSubmissionTimeValue("TollHistoryFile", "/datadrive2/lr-input/Walmart-Test-Data/1xway/1.xway.tolls.dat"); 
+		expression<rstring> $SEGMENT_HISTORY_FILE_NAME : getSubmissionTimeValue("SegmentHistoryFile", "/datadrive2/lr-input-data/2xway/SegmentHistory.dat");
+		expression<int32> $UDP_WIDTH : 60;
+
+	type
+		TollHistoryStatsType = tuple<rstring endTime, uint64 totalTollHistoryTuples, uint64 totalAccountBalanceTuples>;
+		SegmentHistoryStatsType = tuple<rstring endTime, uint64 totalSegmentHistoryTuples>;
+
+	graph
+		// In this composite, we are going to load the Linear Road historical data
+		// into multiple instances of Redis 2.x acting as a single shard group via the DPS toolkit.
+		// We will have to load the toll history and the segment history by
+		// reading them from two separate data files provided to us by the LR data generator.
+		//
+		// Read the TollHistory tuples.
+		stream<TollHistoryType> TollHistory = FileSource() {
+			param
+				// There are close to 3 dozen worker PEs that need to be brought up.
+				// Give them enough time to get ready before they can receive the
+				// toll history tuples without any miss.
+				initDelay: 45.0;
+				file: $TOLL_HISTORY_FILE_NAME; 
+
+			config
+				// Place this source operator on a machine where the historical files are stored.
+				placement: host(lrPool[2]);				
+		}
+				
+		// Load the TollHistory values into Redis now.
+		@parallel(width=$UDP_WIDTH)
+		stream<TollHistoryStatsType> TollHistoryStats as THS = Custom(TollHistory as TH) {
+			logic
+				state: {
+					mutable uint64 _totalTollHistoryTuples = 0ul;
+					mutable uint64 _totalAccountBalanceTuples = 0ul;
+					mutable rstring _key = "";
+					mutable uint64 _err = 0ul;
+                    mutable boolean _res = false;
+					// Account balance tuple with the vehicleId, balance and the most recent balance update time.
+					mutable AccountBalanceType _accountBalanceTuple = {};
+				}
+
+				onTuple	TH: {
+					// We will catch if we are sent toll information for an invalid vehicleId of 0.
+					// We can discard it.
+					if (TH.vehicleId <= 0) {
+						return;
+					}
+				
+					if (_totalTollHistoryTuples++ == 0ul) {
+						appTrc(Trace.error, "Begin loading the toll history tuples into Redis from channel " + (rstring)getChannel() + ".");
+					}
+					
+					// Print the bulk loading progress periodically.
+					if (_totalTollHistoryTuples % 100000ul == 0ul) {
+						appTrc(Trace.error, (rstring)_totalTollHistoryTuples + "-->" + (rstring)TH);
+					}
+					
+					// Form the DPS TTL global store key.
+					_key = (rstring)TH.vehicleId + "_" + (rstring)TH.dayInThePast + "_" + (rstring)TH.expressWayNumber;
+					// Store the daily toll amount in the TTL global store with a no expiry option.
+					_res = dpsPutTTL(_key, TH.totalTollAmount, 0u, _err);
+					
+					if (_res == false) {
+						appTrc(Trace.error, (rstring)_totalTollHistoryTuples + "-->" + 
+							"Unexpected error in dpsPutTTL while loading toll history. Error code=" + 
+							(rstring)dpsGetLastErrorCodeTTL() + ", Error msg=" + dpsGetLastErrorStringTTL());
+						// Abort loading the historical data.
+						abort();
+					}
+					
+					// In addition to loading the toll history for a given vehicle, let us also create another
+					// K/V pair for this vehicle that will be used later by the linear_road Streams application to
+					// store the running account balance,						
+					//
+					// Do it only once for a given vehicle id.
+					if (TH.vehicleId != _accountBalanceTuple.vehicleId) {
+						// Form the DPS TTL global store key.
+						_key = (rstring)TH.vehicleId + "_balance";
+						_res = dpsHasTTL(_key, _err);
+
+						if (_err != 0ul) {
+							appTrc(Trace.error, "Unexpected error in checking the existence of the account balance entry. " + 
+								"Error code=" + (rstring)dpsGetLastErrorCodeTTL() + 
+								", Error msg=" + dpsGetLastErrorStringTTL() + ", key=" + _key);
+							abort();
+						}
+
+						if (_res == false) {
+							_accountBalanceTuple.vehicleId = TH.vehicleId;
+							_accountBalanceTuple.balance = 0;
+							_accountBalanceTuple.mostRecentBalanceUpdateTime = 0;
+					
+							// Store the blank account balance detail for a vehicle in the TTL global store with a no expiry option.
+							_res = dpsPutTTL(_key, _accountBalanceTuple, 0u, _err);
+					
+							if (_res == false) {
+								appTrc(Trace.error,
+									"Unexpected error in dpsPutTTL while creating a default account balance entry. Error code=" + 
+									(rstring)dpsGetLastErrorCodeTTL() + ", Error msg=" + dpsGetLastErrorStringTTL() +
+									", Account balance tupe=" + (rstring)_accountBalanceTuple);
+								// Abort due to an error in saving account balance for a vehicle.
+								abort();
+							} else {
+								_totalAccountBalanceTuples++;
+							}
+						}
+					}
+				}
+				
+				onPunct TH: {
+					if (currentPunct() == Sys.FinalMarker) {
+						// We reached the EOF.
+						appTrc(Trace.error, "End loading the toll history tuples into Redis from channel " +
+							(rstring)getChannel() + ". Total tuples=" + (rstring)_totalTollHistoryTuples);
+						
+						// Send the statistics to a collector sink.
+						mutable TollHistoryStats oTuple = {};
+						oTuple.endTime = ctime(getTimestamp());
+						oTuple.totalTollHistoryTuples = _totalTollHistoryTuples;
+						oTuple.totalAccountBalanceTuples = _totalAccountBalanceTuples;
+						submit(oTuple, THS);
+					}
+				}
+				
+			config
+				// Place this Custom operator on a different machine from the FileSource operator.
+				placement: host(lrPool[0]);	
+		}		
+
+		// Collect all the results from the parallel writers above and print the final details about this bulk loading.
+		() as MySink1 = Custom(TollHistoryStats as THS) {
+			logic
+				state: {
+					mutable uint64 _statDetailsCnt = 0ul;
+					mutable uint64 _totalTollHistoryTuples = 0ul;
+					mutable uint64 _totalAccountBalanceTuples = 0ul;
+					rstring _startTime = ctime(getTimestamp());
+				}
+				
+				onTuple THS: {
+					_statDetailsCnt++;
+					_totalTollHistoryTuples += THS.totalTollHistoryTuples;
+					_totalAccountBalanceTuples += THS.totalAccountBalanceTuples;
+					
+					if (_statDetailsCnt == (uint64)$UDP_WIDTH) {
+						// If all the UDP parallel writers reported their individual write count,
+						// then we can print the total number of TollHistory tuples written to Redis.
+						printStringLn("Start time: " + (rstring)_startTime);
+						// Use the end time of the very last stat report that came here.
+						printStringLn("End time: " + (rstring)THS.endTime);
+						printStringLn("Total TollHistory tuples loaded: " + (rstring)_totalTollHistoryTuples);
+						printStringLn("Total AccountBalance put activities: " + (rstring)_totalAccountBalanceTuples);
+					}
+				}
+				
+			config
+				// Place this Custom sink operator on the same machine as the parallel writers.
+				placement: host(lrPool[0]);	
+		}
+
+		// We will need SegmentHistory only if we are going to implement Type 4 query in
+		// the Linear Road benchmark that deals with calculating travel time estimations.
+		// When Type 4 is implemented, activate the code below for the following FileSource and the
+		// Custom operators.
+		/*
+		// Read the SegmentHistory tuples.
+		stream<SegmentHistoryType> SegmentHistory = FileSource() {
+			param
+				initDelay: 5.0;
+				file: $SEGMENT_HISTORY_FILE_NAME;
+				
+			config
+				// Place this source operator on a machine where the historical files are stored.
+				placement: host(lrPool[2]);					
+		}
+
+		// Load the SegmentHistory values into Redis now.
+		@parallel(width=$UDP_WIDTH)
+		stream<SegmentHistoryStatsType> SegmentHistoryStats as SHS = Custom(SegmentHistory as SH) {
+			logic
+				state: {
+					mutable int32 _totalSegmentHistoryTuples = 0;
+					mutable rstring _key = "";
+					mutable uint64 _err = 0ul;
+                    mutable boolean _res = false;
+				}
+
+				onTuple	SH: {
+					if (_totalSegmentHistoryTuples++ == 0) {
+						appTrc(Trace.error, "Begin loading the segment history tuples into Redis from channel " + (rstring)getChannel() + ".");
+					}
+					
+					// Print the bulk loading progress periodically.
+					if (_totalSegmentHistoryTuples % 100000 == 0) {
+						appTrc(Trace.error, (rstring)_totalSegmentHistoryTuples + "-->" + (rstring)SH);
+					}
+					
+					// Form the DPS TTL global store key.
+					_key = (rstring)SH.dayInThePast + "_" + (rstring)SH.minuteOfCurrentDay + "_" +
+						(rstring)SH.expressWayNumber + (rstring)SH.directionIndicator + (rstring)SH.segmentId;
+					// Store it in the TTL global store with a no expiry option.
+					_res = dpsPutTTL(_key, SH, 0u, _err);
+					
+					if (_res == false) {
+						appTrc(Trace.error, (rstring)_totalSegmentHistoryTuples + "-->" + 
+							"Unexpected error in dpsPutTTL while loading segment history. Error code=" + 
+							(rstring)dpsGetLastErrorCodeTTL() + ", Error msg=" + dpsGetLastErrorStringTTL());
+						// Abort loading the historical data.
+						abort();
+					}						
+				}
+				
+				onPunct SH: {
+					if (currentPunct() == Sys.FinalMarker) {
+						// We reached the EOF.
+						appTrc(Trace.error, "End loading the segment history tuples into Redis from channel " +
+							(rstring)getChannel() + ". Total tuples=" + (rstring)_totalSegmentHistoryTuples);
+							
+						// Send the statistics to a collector sink.
+						mutable SegmentHistoryStats oTuple = {};
+						oTuple.endTime = ctime(getTimestamp());
+						oTuple.totalSegmentHistoryTuples = _totalSegmentHistoryTuples;
+						submit(oTuple, SHS);
+					}
+				}
+				
+			config
+				// Place this Custom operator on a different machine from the FileSource operator.
+				placement: host(lrPool[1]);	
+		}
+		
+		// Collect all the results from the parallel writers above and print the final details about this bulk loading.
+		() as MySink2 = Custom(SegmentHistoryStats as SHS) {
+			logic
+				state: {
+					mutable int32 _statDetailsCnt = 0;
+					mutable int32 _totalSegmentHistoryTuples = 0;
+					rstring _startTime = ctime(getTimestamp());
+				}
+				
+				onTuple SHS: {
+					_statDetailsCnt++;
+					_totalSegmentHistoryTuples += SHS.totalSegmentHistoryTuples;
+					
+					if (_statDetailsCnt == $UDP_WIDTH) {
+						// If all the UDP parallel writers reported their individual write count,
+						// then we can print the total number of SegmentHistory tuples written to Redis.
+						printStringLn("Start time: " + (rstring)_startTime);
+						// Use the end time of the very last stat report that came here.
+						printStringLn("End time: " + (rstring)SHS.endTime);
+						printStringLn("Total SegmentHistory tuples loaded: " + (rstring)_totalSegmentHistoryTuples);
+					}
+				}
+				
+			config
+				// Place this Custom sink operator on the same machine as the parallel writers.
+				placement: host(lrPool[1]);	
+		}
+		*/		
+		
+
+	config
+		// Make a host pool with three application machines: vendor3, vendor4 and vendor5
+		// hostPool: lrPool = ["10.0.0.6", "10.0.0.7", "10.0.0.8"];
+		hostPool: lrPool = ["vendor3", "vendor4", "vendor5"];		
+}

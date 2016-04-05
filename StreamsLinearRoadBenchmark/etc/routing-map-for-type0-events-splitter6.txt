@@ -1,0 +1,25 @@
+# Column 1 is the split key: "expressWayNumber_directionIndicator"
+# The remaining columns represent the output port indices to be used while forwarding the incoming tuples. 
+# Default split operation is to drop the non-matching split keys.
+default,-1
+# Events belonging to each "expressWayNumber_directionIndicator" combination will be sent on their own unique output port.
+50_0, 0
+50_1, 1
+51_0, 2
+51_1, 3
+52_0, 4
+52_1, 5
+53_0, 6
+53_1, 7
+54_0, 8
+54_1, 9
+55_0, 10
+55_1, 11
+56_0, 12
+56_1, 13
+57_0, 14
+57_1, 15
+58_0, 16
+58_1, 17
+59_0, 18
+59_1, 19

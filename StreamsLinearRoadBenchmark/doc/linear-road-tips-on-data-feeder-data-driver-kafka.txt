@@ -1,0 +1,116 @@
+Tuesday, Aug/18/2015
+========================================
+In the Linear Road data driver code, they are using a data structure named
+Tuple in the LRDataProvider.h file. They don't use any C++ namespace of their
+own inside their data driver. Inside Streams, we also have a C++ data
+structure named Tuple. When using their LRDataProvider.h inside the Streams
+C++ operator, it will cause name collision during compilation.
+
+To avoid this error, we must first carefully search their LRDataProvider.h and their
+.cpp files for all the occurrances of Tuple and change it to LRTuple.
+After making this change, proceed to use the following compiler commands.
+========================================
+To compile the LR data driver and create a .so file, use the following commands: (Needed for using it inside Streams)
+
+g++ -g -O3 -Wall -fPIC -D_REENTRANT -c LRDataProvider.cpp MemTuples.cpp Tuple.cpp 
+
+g++ -shared -o libLRDataProvider.so MemTuples.o Tuple.o LRDataProvider.o
+========================================
+To compile the LR data driver and create a .a file, use the following commands: (Needed for using it with the test data driver)
+
+g++ -g -O -c LRDataProvider.cpp MemTuples.cpp Tuple.cpp
+
+// Generate an archive file.
+ar cru libLRDataProvider.a LRDataProvider.o MemTuples.o Tuple.o
+// Generate an index to speed access to the archives.
+ranlib libLRDataProvider.a
+========================================
+To compile the test data driver by linking it with the .a file, use the following command:
+
+g++ -c DataFeeder.cpp
+g++ -o DataFeeder DataFeeder.o -lpthread libLRDataProvider.a
+========================================
+Bugs found in the LR data driver MemTuples.cpp file:
+
+When using this LR data driver, I found "out of sequence" issues and missing tuples as they were read from a file and sent out. 
+
+I fixed those problems in the MemTuples.cpp file on Aug/27/2015. Please search in that file for "Senthil" to see
+the changes I made in five different places to fix those issues. (There is a copy of the source code for the
+data driver and the standalone test application available in the impl/src directory of the 001_ibm_linear_road SPL project.)
+========================================
+Kafka installation steps (Aug/31/2015):
+
+1) Do a web search for jdk-7u79-linux-x64.tar.gz (or the latest JDK), download it and
+   unzip it in any directory on the Kafka machine (e-g: vendor6).
+2) Edit your .bashrc file on the kafka machine and add the following:
+   export JAVA_HOME=<YOUR_DIRECTORY>/jdk1.7.0_79
+   export PATH=<YOUR_DIRECTORY>/jdk1.7.0_79/jre/bin:$PATH
+3) Open a new terminal window and ssh to the kafka machine (if not already logged into that machine).
+   [Ensure that those two environment variables exist on that terminal window session. If not, source .bashrc]
+4) If not done already, start your zookeeper servers as you would normally do it as required for the Streams 4x version.
+5) Download the kafka_2.10-0.8.2.1.tgz (current as of Aug/31/2015) or the latest stable version and unzip.
+6) Change to the kafka_2.10-0.8.2.1 directory.
+7) From there, edit the config/server.properties file and make the following changes:
+   a) Change the zookeeper.connect line with the zk information that you already configured for
+      your Streams 4x environment. You can simply reuse that same zk ensemble.
+      e-g: zookeeper.connect=vendor4:2281,vendor5:2281,vendor6:2281
+
+   b) Ensure you have big enough disk space for the configured kafka log.dirs directory. If not, change it to
+      a drive that has more disk space.
+      e-g: log.dirs=/datadrive/kafka-logs
+8) Save and close the kafka server.properties file.
+9) From the kafka_2.10-0.8.2.1 directory, start the kafka server:
+   ./bin/kafka-server-start.sh ./config/server.properties
+10) Ensure that the kafka server starts without any errors.
+/////////////
+11) Create a kafka topic:
+    ./bin/kafka-topics.sh --create --zookeeper vendor4:2281,vendor5:2281,vendor6:2281 --replication-factor 1 --partitions 1 --topic IBM-Streams-Linear-Road
+12) Check the topic is created and available:
+    ./bin/kafka-topics.sh --list --zookeeper vendor4:2281,vendor5:2281,vendor6:2281
+////////////
+13) In your SPL project's etc directory, create a file lr-producer.properties with the following contents and save it:
+metadata.broker.list=vendor6:9092
+serializer.class=kafka.serializer.StringEncoder
+request.required.acks=1
+
+14) In your SPL project's etc directory, create a file lr-consumer.properties with the following contents and save it:
+zookeeper.connect=vendor4:2281,vendor5:2281,vendor6:2281
+serializer.class=kafka.serializer.StringEncoder
+group.id=ibm-streams-linear-road
+zookeeper.session.timeout.ms=4000
+zookeeper.sync.time.ms=2000
+auto.commit.interval.ms=1000
+
+15) Now you can use the KafkaProducer and KafkaConsumer in your SPL application.
+
+		() as LRKafkaQueue = KafkaProducer(LRCsvEvent) {
+			param
+				propertiesFile : "etc/lr-producer.properties" ;
+				// Incoming tuples will only have a single rstring message attribute.
+				// Hence, we must specify the topic where we want to publish the tuples.
+				topic: $LR_KAFKA_TOPIC_NAME;
+		
+			config
+				// Fuse it with the data feeder operator.			
+				placement: partitionColocation("DataFeeder");
+		}		 	 
+
+		stream<LinearRoadEventCsvType> LREventFromKafkaTopic = KafkaConsumer()
+		{
+			param
+				propertiesFile : "etc/lr-consumer.properties";
+				topic : $LR_KAFKA_TOPIC_NAME;
+
+			config
+				// Fuse it with the LR-DataReceiver partition.
+				placement: partitionColocation("LR-DataReceiver");
+		}		
+	
+16) In order to delete a kafka topic, following command can be used:
+./bin/kafka-topics.sh --delete --zookeeper vendor4:2281,vendor5:2281,vendor6:2281 --topic <YOUR_TOPIC_NAME>
+	
+17) In order to stop a running kafka server, following this step:
+    From the kafka_2.10-0.8.2.1 directory, stop the kafka server:
+   ../bin/kafka-server-stop.sh
+========================================
+   

@@ -1,0 +1,103 @@
+========================================
+Monday, April/04/2016
+========================================
+Before running this application, it is better to have an idea about what the Linear Road Benchmark does. Following is the specification that must be read to understand the Linear Road benchmark criteria.
+
+http://www.cs.brandeis.edu/~linearroad/linear-road.pdf
+
+For more general details about the Linear Road benchmark developed by the academia, please visit here.
+
+http://www.cs.brandeis.edu/~linearroad/index.html
+========================================
+Following are the steps to run the Linear road application using IBM Streams.
+
+1) This application requires Redis server (2.8.x) to be installed on at least five machines with at least 100 GB free memory on each of those machines. Please install Redis server (2.8.x) on five machines before proceeding to the next step.
+
+
+2) Ensure that the Streams domain and Streams instances are started and they are in running with no network or machine problems.
+   You can use the two commands mentioned below in steps (d) and steps (e) to check if your Streams domain and instance are 
+   up and running fine.
+   
+   If you need to start them, use these steps:
+   a) Ensure that three instances of zookeeper are running.
+   b) streamtool  startdomain
+   c) streamtool  startinstance
+   d) streamtool  getdomainstate  -l
+   e) streamtool  getresourcestate -l
+   (If it is only absolutely needed, carefully stop the instance, domain and recreate them again on one or more machines.)
+
+3) This application requires Linear Road data to be generated before running the application. Data generation requires a one time effort that can take several hours to create both the historical toll data file and the linear road traffic data file. There is a separate set of custom made tools available from the Walmart github web site. Please download and go through the steps to generate the required data set for your tests.
+   --> https://github.com/walmart/linearroad
+
+4) This application depends on the following Streams toolkits that must be present in order to compile and run the application.
+   --> Streams messaging toolkit (Shipped as part of the Streams product)
+   --> Streams Distributed Process Store (DPS) toolkit (Shipped as part of the Streams product).
+
+5) Switch to the StreamsLinearRoadBenchmark/scripts directory.
+   --> Edit the build-distributed.sh file and change -t compiler option to point to the correct toolkit directories on your machine.
+   --> Edit the run-distributed-historical-data-loader.sh file and change the -P streamtool command line option to point to the correct toll history data file on your machine.
+   --> Edit the run-distributed-linear-road.sh file and change the -P streamtool command line option to point to the correct linear road data file on your machine.
+
+   --> Edit the ../com.ibm.streamsx.lr/LinearRoad.splmm file and go to the param clause defined right below the composite LinearRoad statement. Change all the references to /datadriveXXXXX/.... to point to the correct directories available on your machines.
+
+   --> Edit the ../com.ibm.streamsx.lr/LinearRoad.splmm file and go to the bottom of that file to find the hostPool definition and change the machine names to point to your 5 Streams machines.
+
+   --> Edit the ../etc/no-sql-kv-store-servers.cfg file and change all the Redis server names and port numbers mentioned at the bottom of that file to match your Redis server names and port numbers.
+
+  --> If you want to use Kafka for data ingestion, you may want to edit the ../etc/lr-consumer.properties and ../etc/lr-producer.properties files to point to your zookeeper server ensemble names and your Kafka server names. If you don't want to use Kafka, you can ignore making changes to these files.
+ 
+6) Build the Linear road application: ./build-distributed.sh
+
+7) Start the Redis servers using this script:  ./start-redis.sh
+   --> Before running this script, ensure that you have Redis 2.8.x installed on multiple machines (at least 5 machines) with plenty of available memory.
+   --> Edit this script file and change the server names found here to match your Redis server names and Linux user id. In addition, change the path to the redis executable file and configuration file.  
+
+8) Run the historical data loader to load the past ten weeks worth of toll information into the Redis data store:
+
+   a) Edit the ./run-distributed-historical-data-loader.sh file and comment out all the "streamtool submitjob ..." commands in
+      that file except for the one which you want to load. (e-g: 3 hours 10 expressways or 3 hours 50 expressways or something else)
+   
+   b) Save and close the file.
+   
+   c) Run this command:  ./run-distributed-historical-data-loader.sh  -d StreamsDomain  -i StreamsInstance
+   
+      [Note: Depending on the number of expressways, it will take varying amount of time to complete. 
+       For example, 3 hours 1 expressway will take 8 minutes to completely load all the historical data.
+       3 hours 50 expressways will take 330 minutes to complete. This load time is not taken into account in the
+       overall Linear Road performance calculations. It must be done before running a Linear Road test.]
+       
+      [On the machines where this application is running, you can monitor and check the PE logs to see the status or
+       completion of this task.]
+
+9) After completing the historical data loading, stop that application. Once that is done, you can start the Linear Road test:
+
+   a) Edit the ./run-distributed-linear-road.sh file and comment out all the "streamtool submitjob ..." commands in
+      that file except for the one which you want to run. (e-g: 3 hours 10 expressways 3 hours 50 expressways or something else)
+   
+   b) Save and close the file.
+   
+   c) Run this command:  ./run-distributed-linear-road.sh -d StreamsDomain -i StreamsInstance
+   
+      [Note: This application will complete in 3 hours time.]
+       
+      [On the machines where this application is running, you can monitor and check the PE logs to see the status or 
+       completion of this task.]
+   
+10) Stopping the test:
+   a) Ensure that the Linear Road test is completed by checking in the PE log files.
+
+   b) Ensure that you are in this directory: LinearRoadBenchmark/scripts
+   
+   c) Run this command:  ./stop-streams-app.sh -d StreamsDomain -i StreamsInstance
+   
+   d) Run this command to stop your Streams instance:  streamtool  stopinstance
+   
+   e) Run this command to stop your Streams domain:  streamtool   stopdomain
+
+   f) From your configured application data output directory, you can archive the linear road output files if needed.   
+
+   g) If you have plans to run another test for the same number of expressways, then you must follow the steps from step 5 above. (Redis must be repopulated with the historical data again.)
+
+   h) If you want to try out different number of expressways (50x, 100x, 150x etc.), then you must edit the LinearRoad.splmm and adjust the linear road processing banks and the required number of data feeders. After doing that, you can continue from step 5 above. 
+======================================== 
+  
