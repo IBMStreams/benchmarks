@@ -1,5 +1,6 @@
 #include <time.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #include "LRDataProvider.h"
 

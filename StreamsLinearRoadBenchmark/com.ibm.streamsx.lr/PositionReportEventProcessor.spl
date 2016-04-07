@@ -1,3 +1,8 @@
+// *******************************************************************************
+// * Copyright (C) 2016 International Business Machines Corporation
+// * All Rights Reserved
+// *******************************************************************************
+
 /*
 ==================================================================================
                        RACING IBM STREAMS ON LINEAR ROAD
@@ -14,7 +19,7 @@ If necessary, please read about that first before proceeding with the code below
 http://www.cs.brandeis.edu/~linearroad/ 
 
 First created on: Aug/19/2015
-Last modified on: Oct/02/2015
+Last modified on: Dec/13/2015
 ==================================================================================
 */
 namespace com.ibm.streamsx.lr;

@@ -1,3 +1,8 @@
+// *******************************************************************************
+// * Copyright (C) 2016 International Business Machines Corporation
+// * All Rights Reserved
+// *******************************************************************************
+
 /*
 ===============================================================================
                        RACING IBM STREAMS ON LINEAR ROAD
@@ -40,7 +45,7 @@ either an inferior or a superior performance of IBM Streams for this use case.
 It would be nice to see such alternative improved IBM Streams-->Linear Road solutions.
 
 First created on: Aug/19/2015
-Last modified on: Oct/14/2015
+Last modified on: Mar/05/2016
 ===============================================================================
 */
 

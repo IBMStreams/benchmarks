@@ -19,7 +19,7 @@ These two benchmarks were used as part of this performance analysis report:
 https://developer.ibm.com/streamsdev/wp-content/uploads/sites/15/2014/04/Streams-and-Storm-April-2014-Final.pdf
 
 
-Linear Road Benchmark Application was built using a public specification developed by MIT, Brown, Brandeis and Stanford.
+Linear Road Benchmark Application was built using a publicly available specification developed by MIT, Brown, Brandeis and Stanford.
 
 http://www.cs.brandeis.edu/~linearroad/linear-road.pdf
 

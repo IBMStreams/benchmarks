@@ -33,7 +33,11 @@ Following are the steps to run the Linear road application using IBM Streams.
    --> Streams messaging toolkit (Shipped as part of the Streams product)
    --> Streams Distributed Process Store (DPS) toolkit (Shipped as part of the Streams product).
 
-5) Switch to the StreamsLinearRoadBenchmark/scripts directory.
+5) To feed the data generated in step 3 above, we will be using a Linear Road data driver shared object library. This library must be first created for your Linux platform version before continuing with the next steps below. Read the following file and follow the steps described there to get this shared object library built. [All the source code included in the impl/src directory was developed and copyrighted by the academic institutions such as MIT, Brown, Brandeis and Stanford.]
+
+   StreamsLinearRoadBenchmark/impl/src/lr-data-driver/data-driver-lib/steps-to-create-lr-data-driver-shared-library.txt  
+
+6) Switch to the StreamsLinearRoadBenchmark/scripts directory.
    --> Edit the build-distributed.sh file and change -t compiler option to point to the correct toolkit directories on your machine.
    --> Edit the run-distributed-historical-data-loader.sh file and change the -P streamtool command line option to point to the correct toll history data file on your machine.
    --> Edit the run-distributed-linear-road.sh file and change the -P streamtool command line option to point to the correct linear road data file on your machine.
@@ -46,13 +50,13 @@ Following are the steps to run the Linear road application using IBM Streams.
 
   --> If you want to use Kafka for data ingestion, you may want to edit the ../etc/lr-consumer.properties and ../etc/lr-producer.properties files to point to your zookeeper server ensemble names and your Kafka server names. If you don't want to use Kafka, you can ignore making changes to these files.
  
-6) Build the Linear road application: ./build-distributed.sh
+7) Build the Linear road application: ./build-distributed.sh
 
-7) Start the Redis servers using this script:  ./start-redis.sh
+8) Start the Redis servers using this script:  ./start-redis.sh
    --> Before running this script, ensure that you have Redis 2.8.x installed on multiple machines (at least 5 machines) with plenty of available memory.
    --> Edit this script file and change the server names found here to match your Redis server names and Linux user id. In addition, change the path to the redis executable file and configuration file.  
 
-8) Run the historical data loader to load the past ten weeks worth of toll information into the Redis data store:
+9) Run the historical data loader to load the past ten weeks worth of toll information into the Redis data store:
 
    a) Edit the ./run-distributed-historical-data-loader.sh file and comment out all the "streamtool submitjob ..." commands in
       that file except for the one which you want to load. (e-g: 3 hours 10 expressways or 3 hours 50 expressways or something else)
@@ -69,7 +73,7 @@ Following are the steps to run the Linear road application using IBM Streams.
       [On the machines where this application is running, you can monitor and check the PE logs to see the status or
        completion of this task.]
 
-9) After completing the historical data loading, stop that application. Once that is done, you can start the Linear Road test:
+10) After completing the historical data loading, stop that application. Once that is done, you can start the Linear Road test:
 
    a) Edit the ./run-distributed-linear-road.sh file and comment out all the "streamtool submitjob ..." commands in
       that file except for the one which you want to run. (e-g: 3 hours 10 expressways 3 hours 50 expressways or something else)
@@ -83,7 +87,7 @@ Following are the steps to run the Linear road application using IBM Streams.
       [On the machines where this application is running, you can monitor and check the PE logs to see the status or 
        completion of this task.]
    
-10) Stopping the test:
+11) Stopping the test:
    a) Ensure that the Linear Road test is completed by checking in the PE log files.
 
    b) Ensure that you are in this directory: LinearRoadBenchmark/scripts
