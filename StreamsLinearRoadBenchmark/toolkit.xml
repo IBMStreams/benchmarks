@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<toolkitModel xmlns="http://www.ibm.com/xmlns/prod/streams/spl/toolkit" productVersion="4.0.1.0" xmlns:common="http://www.ibm.com/xmlns/prod/streams/spl/common" xmlns:ti="http://www.ibm.com/xmlns/prod/streams/spl/toolkitInfo" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <toolkit name="001_ibm_linear_road" requiredProductVersion="4.0.1.0" version="1.0.0">
+    <description/>
+    <uriTable>
+      <uri index="7" value="com.ibm.streamsx.lr/DataFeeder"/>
+      <uri index="3" value="com.ibm.streamsx.lr/DailyExpenditureEventProcessor.spl"/>
+      <uri index="2" value="com.ibm.streamsx.lr.common/LinearRoadDataTypes.spl"/>
+      <uri index="6" value="com.ibm.streamsx.lr/LinearRoad.spl"/>
+      <uri index="1" value="com.ibm.streamsx.lr.history/HistoricalDataLoader.spl"/>
+      <uri index="4" value="com.ibm.streamsx.lr/PositionReportEventProcessor.spl"/>
+      <uri index="5" value="com.ibm.streamsx.lr/AccountBalanceEventProcessor.spl"/>
+    </uriTable>
+    <namespace name="com.ibm.streamsx.lr">
+      <primitiveOp language="Cpp" modelUriIndex="7" name="DataFeeder" public="true">
+        <customLiterals name="DataReceiverType">
+          <value name="tcp"/>
+          <value name="kafka"/>
+          <value name="none"/>
+        </customLiterals>
+        <parametersDescription/>
+        <parameter cardinality="1" expressionMode="AttributeFree" name="dataFile" optional="false" type="rstring">
+          <description sampleUri=""/>
+        </parameter>
+        <parameter cardinality="1" expressionMode="AttributeFree" name="initDelay" optional="false" type="uint32">
+          <description/>
+        </parameter>
+        <parameter cardinality="1" expressionMode="CustomLiteral" name="dataReceiver" optional="false" type="DataReceiverType">
+          <description/>
+        </parameter>
+        <parameter cardinality="1" expressionMode="AttributeFree" name="startingExpressway" optional="false" type="uint32">
+          <description/>
+        </parameter>
+        <parameter cardinality="1" expressionMode="AttributeFree" name="endingExpressway" optional="false" type="uint32">
+          <description/>
+        </parameter>
+        <inputPort minNumPorts="0" optional="true" windowPunctInputMode="WindowBound">
+          <windowPolicy>OptionallyWindowed</windowPolicy>
+        </inputPort>
+        <outputPort expressionMode="Expression" minNumPorts="0" optional="true" windowPunctOutputMode="Generating"/>
+      </primitiveOp>
+      <compositeOp column="18" line="34" name="DailyExpenditureEventProcessor" potentialMain="false" public="true" uriIndex="3">
+        <parameter defaultValue="(boolean)getSubmissionTimeValue(&quot;ProduceResultsForLRSpec&quot;, &quot;false&quot;)" metaType="Expression" name="PRODUCE_RESULTS_STRICTLY_FOR_LR_SPECIFICATION" optional="true" type="&lt;boolean>"/>
+        <inputPort name="DailyExpenditureEvent" portIndex="0"/>
+        <outputPort name="DailyExpenditure" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="18" line="41" name="PositionReportEventProcessor" potentialMain="false" public="true" uriIndex="4">
+        <parameter defaultValue="0" metaType="Expression" name="ENTRY_LANE" optional="true" type="&lt;int32>"/>
+        <parameter defaultValue="4" metaType="Expression" name="EXIT_LANE" optional="true" type="&lt;int32>"/>
+        <parameter defaultValue="2" metaType="Expression" name="ACCOUNT_BALANCE_QUERY_EVENT" optional="true" type="&lt;int32>"/>
+        <parameter defaultValue="(boolean)getSubmissionTimeValue(&quot;ProduceResultsForLRSpec&quot;, &quot;false&quot;)" metaType="Expression" name="PRODUCE_RESULTS_STRICTLY_FOR_LR_SPECIFICATION" optional="true" type="&lt;boolean>"/>
+        <parameter defaultValue="2" metaType="Expression" name="ACCOUNT_BALANCE_UPDATE_TIME_ADJUSTMENT_THRESHOLD" optional="true" type="&lt;int32>"/>
+        <inputPort name="PositionReportEvent" portIndex="0"/>
+        <inputPort name="TimerSignal" portIndex="1"/>
+        <outputPort name="TollNotification" portIndex="0"/>
+        <outputPort name="AccidentAlert" portIndex="1"/>
+        <outputPort name="AccountBalanceResult" portIndex="2"/>
+      </compositeOp>
+      <compositeOp column="18" line="34" name="AccountBalanceEventProcessor" potentialMain="false" public="true" uriIndex="5">
+        <inputPort name="AccountBalanceResult" portIndex="0"/>
+        <outputPort name="AccountBalance" portIndex="0"/>
+      </compositeOp>
+      <compositeOp column="11" line="68" name="LinearRoad" potentialMain="true" uriIndex="6">
+        <parameter defaultValue="getSubmissionTimeValue(&quot;DataFile&quot;, &quot;/datadrive2/lr-input/Walmart-Test-Data/1xway/1.xway.final.dat&quot;)" metaType="Expression" name="LINEAR_ROAD_DATA_FILE_NAME" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="getSubmissionTimeValue(&quot;Type0OutputFile&quot;, &quot;/datadrive/lr-output/0-toll-notifications.txt&quot;)" metaType="Expression" name="LINEAR_ROAD_FINAL_TYPE0_OUTPUT_FILE" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="getSubmissionTimeValue(&quot;Type1OutputFile&quot;, &quot;/datadrive/lr-output/1-accident-alerts.txt&quot;)" metaType="Expression" name="LINEAR_ROAD_FINAL_TYPE1_OUTPUT_FILE" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="getSubmissionTimeValue(&quot;Type2OutputFile&quot;, &quot;/datadrive/lr-output/2-account-balances.txt&quot;)" metaType="Expression" name="LINEAR_ROAD_FINAL_TYPE2_OUTPUT_FILE" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="getSubmissionTimeValue(&quot;Type3OutputFile&quot;, &quot;/datadrive/lr-output/3-daily-expenditures.txt&quot;)" metaType="Expression" name="LINEAR_ROAD_FINAL_TYPE3_OUTPUT_FILE" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="0" metaType="Expression" name="POSTION_REPORT_EVENT" optional="true" type="&lt;int32>"/>
+        <parameter defaultValue="2" metaType="Expression" name="ACCOUNT_BALANCE_QUERY_EVENT" optional="true" type="&lt;int32>"/>
+        <parameter defaultValue="3" metaType="Expression" name="DAILY_EXPENDITURE_QUERY_EVENT" optional="true" type="&lt;int32>"/>
+        <parameter defaultValue="getSubmissionTimeValue(&quot;KafkaTopicName&quot;, &quot;IBM-Streams-Linear-Road&quot;)" metaType="Expression" name="LR_KAFKA_TOPIC_NAME" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="2592000.00" metaType="Expression" name="INIT_DELAY_FOR_THIRTY_DAYS" optional="true" type="&lt;float64>"/>
+        <parameter defaultValue="(float64)getSubmissionTimeValue(&quot;InitDelay&quot;, &quot;45.00&quot;)" metaType="Expression" name="INIT_DELAY_VALUE" optional="true" type="&lt;float64>"/>
+      </compositeOp>
+      <function column="1" line="1015" name="performTollAssessment" native="false" public="true" returnType="void" stateful="true" uriIndex="4">
+        <prototype>public stateful void performTollAssessment(int32 vehicleId, int32 notifiedTollCharge, int32 mostRecentBalanceUpdateTime, rstring appTrcAspect)</prototype>
+        <parameter name="vehicleId" type="int32"/>
+        <parameter name="notifiedTollCharge" type="int32"/>
+        <parameter name="mostRecentBalanceUpdateTime" type="int32"/>
+        <parameter name="appTrcAspect" type="rstring"/>
+      </function>
+      <function column="1" line="1042" name="getCurrentAccountBalance" native="false" public="true" returnType="void" stateful="true" uriIndex="4">
+        <prototype>public stateful void getCurrentAccountBalance(LinearRoadEventType lrEventTuple, mutable AccountBalanceResultType abrTuple, int32 accountBalanceUpdateTimeAdjustmentThreshold, rstring appTrcAspect)</prototype>
+        <parameter name="lrEventTuple" type="LinearRoadEventType"/>
+        <parameter mutable="true" name="abrTuple" type="AccountBalanceResultType"/>
+        <parameter name="accountBalanceUpdateTimeAdjustmentThreshold" type="int32"/>
+        <parameter name="appTrcAspect" type="rstring"/>
+      </function>
+    </namespace>
+    <namespace name="com.ibm.streamsx.lr.history">
+      <compositeOp column="11" line="26" name="HistoricalDataLoader" potentialMain="true" uriIndex="1">
+        <parameter defaultValue="getSubmissionTimeValue(&quot;TollHistoryFile&quot;, &quot;/datadrive2/lr-input/Walmart-Test-Data/1xway/1.xway.tolls.dat&quot;)" metaType="Expression" name="TOLL_HISTORY_FILE_NAME" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="getSubmissionTimeValue(&quot;SegmentHistoryFile&quot;, &quot;/datadrive2/lr-input-data/2xway/SegmentHistory.dat&quot;)" metaType="Expression" name="SEGMENT_HISTORY_FILE_NAME" optional="true" type="&lt;rstring>"/>
+        <parameter defaultValue="60" metaType="Expression" name="UDP_WIDTH" optional="true" type="&lt;int32>"/>
+        <type column="3" line="34" name="TollHistoryStatsType" type="tuple&lt;rstring endTime, uint64 totalTollHistoryTuples, uint64 totalAccountBalanceTuples>" uriIndex="1"/>
+        <type column="3" line="35" name="SegmentHistoryStatsType" type="tuple&lt;rstring endTime, uint64 totalSegmentHistoryTuples>" uriIndex="1"/>
+      </compositeOp>
+    </namespace>
+    <namespace name="com.ibm.streamsx.lr.common">
+      <type column="6" line="33" name="LinearRoadEventCsvType" static="true" type="tuple&lt;rstring message>" uriIndex="2"/>
+      <type column="6" line="37" name="LinearRoadEventType" static="true" type="tuple&lt;int32 eventType, int32 eventTxTimestamp, int32 vehicleId, int32 vehicleSpeed, int32 expressWayNumber, int32 laneNumber, int32 directionIndicator, int32 segmentId, int32 vehiclePosition, int32 queryId, int32 startingSegment, int32 endingSegment, int32 dayOfWeek, int32 minuteOfCurrentDay, int32 dayInThePast, int64 eventRxTimestamp>" uriIndex="2"/>
+      <type column="6" line="44" name="TollHistoryType" static="true" type="tuple&lt;int32 vehicleId, int32 dayInThePast, int32 expressWayNumber, int32 totalTollAmount>" uriIndex="2"/>
+      <type column="6" line="47" name="SegmentHistoryType" static="true" type="tuple&lt;int32 dayInThePast, int32 minuteOfCurrentDay, int32 expressWayNumber, int32 directionIndicator, int32 segmentId, int32 averageSpeed, int32 numberOfVehicles, int32 tollCharge>" uriIndex="2"/>
+      <type column="6" line="51" name="AccountBalanceType" static="true" type="tuple&lt;int32 vehicleId, int32 balance, int32 mostRecentBalanceUpdateTime>" uriIndex="2"/>
+      <type column="6" line="53" name="AccountBalanceResultType" static="true" type="tuple&lt;int32 eventType, int32 eventTxTimestamp, int32 resultEmitTimestamp, int32 queryId>, AccountBalanceType" uriIndex="2"/>
+      <type column="6" line="56" name="FinalOutputType" static="true" type="tuple&lt;rstring line>" uriIndex="2"/>
+      <type column="6" line="58" name="VehicleInfoType" static="true" type="tuple&lt;int32 lastTraveledSegmentId, int32 lastTraveledLaneNumber, list&lt;int32> reportedPositions, int32 notifiedTollCharge>" uriIndex="2"/>
+      <type column="6" line="61" name="VehicleExpresswayInfoType" static="true" type="tuple&lt;int32 expressWayNumber, int32 directionIndicator>" uriIndex="2"/>
+      <type column="6" line="63" name="PerMinuteSegmentStatisticsType" static="true" type="tuple&lt;int32 totalVehicleSpeed, int32 totalPositionReports, set&lt;int32> vehicleIds, int32 numberOfVehicles>" uriIndex="2"/>
+    </namespace>
+    <dependency>
+      <common:name>com.ibm.streamsx.dps</common:name>
+      <common:version>[2.0.9,3.0.0)</common:version>
+    </dependency>
+    <dependency>
+      <common:name>com.ibm.streamsx.messaging</common:name>
+      <common:version>[2.0.1,3.0.0)</common:version>
+    </dependency>
+    <sabFiles>
+      <ti:include path="toolkit.xml" root="toolkitDir"/>
+      <ti:include path="impl/java/lib/**" root="toolkitDir"/>
+      <ti:include path="impl/java/bin/**" root="toolkitDir"/>
+      <ti:include path="impl/bin/**" root="toolkitDir"/>
+      <ti:include path="impl/lib/**" root="toolkitDir"/>
+      <ti:include path="impl/nl/*.dat" root="toolkitDir"/>
+      <ti:include path="etc/**" root="toolkitDir"/>
+      <ti:include path="lib/**" root="toolkitDir"/>
+      <ti:include path="nl/**" root="toolkitDir"/>
+      <ti:include path="opt/**" root="toolkitDir"/>
+    </sabFiles>
+  </toolkit>
+
+</toolkitModel>

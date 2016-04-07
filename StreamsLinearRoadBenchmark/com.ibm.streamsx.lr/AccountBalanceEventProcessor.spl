@@ -1,0 +1,63 @@
+// *******************************************************************************
+// * Copyright (C) 2016 International Business Machines Corporation
+// * All Rights Reserved
+// *******************************************************************************
+
+/*
+==================================================================================
+                       RACING IBM STREAMS ON LINEAR ROAD
+                       *********************************
+This file contains the IBM Streams code for ABEP (Account Balance Event Processor)
+that processes the Account Balance event received by the main composite that
+performs the Linear Road analytics which offers one particular method to evaluate
+a Streaming Middleware product by measuring its key performance indicators.
+
+In order to understand the code below, one should have a good grounding in
+the imaginary scenario on which the Linear Road is based upon.
+If necessary, please read about that first before proceeding with the code below.
+
+http://www.cs.brandeis.edu/~linearroad/ 
+
+First created on: Aug/19/2015
+Last modified on: Sep/30/2015
+==================================================================================
+*/
+namespace com.ibm.streamsx.lr;
+
+// Let the compiler know about the other composites and toolkits the code below depends on.
+// Commonly used data types and SPL functions are available in this namespace.
+use com.ibm.streamsx.lr.common::*;
+// Following are for the DPS toolkit namespaces that provide the functions we will use in the code below.
+use com.ibm.streamsx.lock.distributed::*;
+use com.ibm.streamsx.store.distributed::*;
+
+// Define the non-main ABEP composite to process all the Account Balance events.
+// This is relatively a simple composite containing the necessary logic to address the needs of
+// handling the historical query events that are auxiliary to the Linear Road scenario.
+// These are Type 2 events that account for 1% of the total traffic that will be sent our way.
+// More specifically, Type 2 events account for 50% of the total historical queries that will be sent our way.
+public composite AccountBalanceEventProcessor(output AccountBalance; input AccountBalanceResult) {
+	// A sub-graph that will be part of the main application topology begins here.		
+	graph
+		stream<FinalOutputType> AccountBalance as AB = Functor(AccountBalanceResult as ABR) {
+			logic
+				state: {
+					mutable rstring _resultLine = "";
+				}
+				
+				onTuple ABR: {
+					// Type2: (type, time, emit, resulttime, qid, answer)
+					_resultLine = (rstring)ABR.eventType + "," + 
+						(rstring)ABR.eventTxTimestamp + "," + 
+						(rstring)ABR.resultEmitTimestamp +
+						"," +  (rstring)ABR.mostRecentBalanceUpdateTime + 
+						"," + (rstring)ABR.queryId + "," + (rstring)ABR.balance;					
+				}
+				
+			output
+				// Create the Account balance output tuple as a single string so that
+				// it can be written to a file via the FileSink for result validation.
+				// We will format a string output with the Type 2 query result fields in it.
+				AB: line = _resultLine;
+		}
+}

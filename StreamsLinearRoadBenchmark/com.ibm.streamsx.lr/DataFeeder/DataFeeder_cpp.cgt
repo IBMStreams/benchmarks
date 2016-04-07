@@ -1,0 +1,714 @@
+// *******************************************************************************
+// * Copyright (C) 2016 International Business Machines Corporation
+// * All Rights Reserved
+// *******************************************************************************
+
+/*
+==================================================================================
+                       RACING IBM STREAMS ON LINEAR ROAD
+                       *********************************
+This file contains the IBM Streams C++ operator code for feeding the simulated
+data set into the processing logic of the Linear Road Streams application.
+The data feeder code provided by the LR team is faithfully wrapped
+inside this operator's process method that does a typical source operator function.
+
+Linear Road analytics offers one particular method to evaluate a Streaming
+Middleware product by measuring its key performance indicators.
+
+In order to understand the code below, one should have a good grounding in
+the imaginary scenario on which the Linear Road is based upon.
+If necessary, please read about that first before proceeding with the code below.
+
+http://www.cs.brandeis.edu/~linearroad/ 
+
+First created on: Aug/19/2015
+Last modified on: Oct/14/2015
+==================================================================================
+*/
+/* Additional includes go here */
+#include <stdlib.h>
+#include <string>
+#include <iostream>
+#include <fstream>
+#include <time.h>
+#include <string.h>
+
+// Include the header file provided by the the Linear Road data driver.
+#include "LRDataProvider.h"
+
+using namespace std;
+
+<%SPL::CodeGen::implementationPrologue($model);%>
+
+// Constructor
+MY_OPERATOR::MY_OPERATOR()
+{
+    // Initialization code goes here
+	initDelay = 0;
+	lrDataFile = "";
+	dataReceiver = "";
+	startingExpressway = 0;
+	endingExpressway = 0;
+	
+	// Read the user supplied operator parameters done at the time of the operation invocation inside the SPL file.
+	// All our operator parameters are mandatory. Hence, there is no need to check whether the
+	// getParameterByName method returns a non-null value or not.
+	<%
+    	my $dataFileParam = $model->getParameterByName("dataFile");	
+        print ("lrDataFile = " . $dataFileParam->getValueAt(0)->getCppExpression() . ";\n");
+        
+    	my $initDelayParam = $model->getParameterByName("initDelay");	
+        print ("initDelay = " . $initDelayParam->getValueAt(0)->getCppExpression() . ";\n");
+        
+		# This one is is defined in the operator model to be a CustomLiteral.
+		# Hence, we have to use getSPLExpression to get the literal and then include it within double quotes. 
+        my $dataReceiverParam = $model->getParameterByName("dataReceiver");	
+        print ("dataReceiver = \"" . $dataReceiverParam->getValueAt(0)->getSPLExpression() . "\";\n");
+        
+    	my $startingExpresswayParam = $model->getParameterByName("startingExpressway");	
+        print ("startingExpressway = " . $startingExpresswayParam->getValueAt(0)->getCppExpression() . ";\n");
+        
+    	my $endingExpresswayParam = $model->getParameterByName("endingExpressway");	
+        print ("endingExpressway = " . $endingExpresswayParam->getValueAt(0)->getCppExpression() . ";\n");
+    %>
+    
+    // Data receiver param must be either "tcp" or "kafka" or "none".
+    // Use "none" to disable the LinearRoad data feeder logic and read the data using
+    // a different operator such as FileSource for a fast reading/LR-logic-debugging purposes.
+    if ((dataReceiver != "tcp") && (dataReceiver != "kafka") && (dataReceiver != "none")) {
+    	SPLAPPTRC(L_ERROR, "dataReceiver operator parameter must either be \"tcp\" or \"kafka\" or \"none\".", "_X_DF");
+		// Let us abort this operator.
+		SPL::Functions::Utility::abort("", 0);
+    }
+}
+
+// Destructor
+MY_OPERATOR::~MY_OPERATOR() 
+{
+    // Finalization code goes here
+}
+
+// Notify port readiness
+void MY_OPERATOR::allPortsReady() 
+{
+    // Notifies that all ports are ready. No tuples should be submitted before
+    // this. Source operators can use this method to spawn threads.
+      createThreads(1); // Create source thread
+}
+ 
+// Notify pending shutdown
+void MY_OPERATOR::prepareToShutdown() 
+{
+    // This is an asynchronous call
+}
+
+// Processing for source and threaded operators
+// This method doesn't use any of the data feeder logic provided by the
+// Linear Road data feeder C++ library code. All the logic inside this
+// method was bulit by the IBM Streams team to create a similar behavior as
+// in the LR data feeder to send data in bursts. If you want to use the
+// original LR data feeder code for some reason, you can refer to the
+// commented out method that appears below this method.
+void MY_OPERATOR::process(uint32_t idx)
+{
+	SPLAPPTRC(L_ERROR, "******* START OF LINEAR ROAD PROCESSING (data feeder) *******", "_X_DF");	
+	
+	if (dataReceiver == "none") {
+		// User doesn't want to read using the Linear Road data feeded logic.
+		// This is usually done for reading the LR data via a different operator such as the
+		// FileSource to make the debugging of the core LR SPL logic much faster.
+		SPLAPPTRC(L_ERROR, "User opted for not using the Linear Road data feeder logic with \"none\" option.", "X_DF");
+		SPLAPPTRC(L_ERROR, "******* END OF LINEAR ROAD PROCESSING (data feeder) *******", "X_DF");
+		return;
+	}
+	
+	// Open the file from where have to read the LR traffic data.
+	ifstream lrFile(lrDataFile.c_str());
+	
+	if (lrFile.is_open() == false) {
+		SPLAPPTRC(L_ERROR, "Unable to open the LR Data file (" + lrDataFile + ").", "X_DF");
+		SPLAPPTRC(L_ERROR, "******* END OF LINEAR ROAD PROCESSING (data feeder) *******", "X_DF");
+		return;
+	}
+	
+	// If user has asked us to do an initDelay, let us wait briefly now before proceeding.
+	if (initDelay > 0) {
+		sleep(initDelay);
+	}
+	
+	int ts = 0;
+	uint64 submittedTuplesTotalCnt = 0;
+	uint64 previousTotalOfSubmittedTuples = 0;
+	uint64 numberOfTuplesSubmittedInThisTimeBlock = 0;
+	string lrEventDataToBeSent = "";
+	time_t startTime;
+	time_t currentTime;
+	time(&startTime);
+
+	// A typical Source operator implementation will loop until shutdown.
+	// We will stay here in this loop and keep feeding the
+	// Linear Road data to the rest of the Streams application topology. 
+	while(!getPE().getShutdownRequested()) {
+		// Get a random number between 1 and 2
+		srand(time(NULL));			  
+		int s =  (int) ((((double) rand()) / RAND_MAX) * 1) + 1;
+		// Sleep s seconds.
+		// Sleeping here allows us to send a burst of data to the downstream stream processing components and
+		// that will test the ability to handle periodic bursts. However, it also gives a chance for
+		// for those downstream components to be idle for several seconds routinely. This will help the Java based
+		// products enough time to do garbage collection thereby hiding certain sluggishness. 
+		//
+		// In addition, it would also be necessary to send a continuous stream of data at high volumes without
+		// any sleep and test whether the downstream stream processing components can sustain that continuous load.
+		// But, the designers of the Linear Road DataFeeder didn't do that for some unknown reasons.
+		//	
+		// sleep(s);
+		SPL::Functions::Utility::block((float64)s);
+		
+		// Stay in a loop and start sending the data from where we left off earlier until the current simulation second.
+		while(lrFile.eof() == false) {
+			// If there is pending data from the previous file read still waiting to be sent,
+			// we can first deal with that pending data before reading a new row from the file.
+			if (lrEventDataToBeSent.length() == 0) {
+				// Read the next row from the file.
+				getline(lrFile, lrEventDataToBeSent);
+				
+				// If we encounter any empty lines, skip them.
+				if (lrEventDataToBeSent.length() == 0) {
+					// continue with the file reading inner while loop.
+					continue;
+				}
+			}
+
+			// In the row we read from the LR data file, there should be 15 tokens each
+			// separated by a comma character. Let us parse it now.
+			int32 values[15] = {0};
+			int32 idx = 0;
+			char eventStr[540] = {0x0};
+
+			// C strtok is not thread safe when I fuse multiple data feeders. Hence, I had to write my own parser.
+			// Don't use the following block of code when multiple data feeders are fused. That causes, strtok to corrupt memory.
+			/*
+			strcpy(eventStr, lrEventDataToBeSent.c_str());
+			char *token = strtok(eventStr, ",");
+			
+			while(token != NULL) {
+				values[idx++] = atoi(token);
+				token = strtok(NULL, ",");
+			}
+			
+			// Check if we parsed all the 15 tokens from that row.
+			if (idx < 15) {
+				// This was a malformed row with less than 15 tokens in it.
+				SPLAPPTRC(L_ERROR, "Invalid event found in file: Token count=" << idx << ", event data=" << 
+					lrEventDataToBeSent << ", event C str=" << string(eventStr), "_X_DF");
+				lrEventDataToBeSent.clear();
+				// Continue with the inner while loop to read the next row.
+				continue;
+			}
+			*/
+			
+			// Let us write our own CSV parser in C.
+			strcpy(eventStr, lrEventDataToBeSent.c_str());
+			int32 len = lrEventDataToBeSent.length();
+			int32 loopCnt = 0;
+			char token[50] = {0x0};
+			int32 tokenLen = 0;
+			
+			for (loopCnt = 0; loopCnt < len; loopCnt++) {
+				if (eventStr[loopCnt] == ',') {
+					// Comma found
+					token[tokenLen] = 0x0;
+					// Convert this token to an integer and store it.
+					values[idx++] = atoi(token);
+					tokenLen = 0;
+				} else {
+					// Keep collecting the characters for the current token being parsed.
+					token[tokenLen++] = eventStr[loopCnt];
+				}				
+			}
+			
+			// End of string reached. Convert the final token to integer and store it.
+			token[tokenLen] = 0x0;
+			values[idx++] = atoi(token);
+			
+			// Check if we parsed all the 15 tokens for a given Linear Road event row.
+			if (idx < 15) {
+				// This was a malformed row with less than 15 tokens in it.
+				SPLAPPTRC(L_ERROR, "Invalid event found in file: Token count=" << idx << ", event data=" << 
+					lrEventDataToBeSent << ", event C str=" << string(eventStr), "_X_DF");
+				lrEventDataToBeSent.clear();
+				// Continue with the inner while loop to read the next row.
+				continue;
+			}			
+			
+			
+			// Use this code block for debugging the result from our home grown CSV parser.
+			/*
+			if (endingExpressway == 9) {
+				cout << "Row=" << lrEventDataToBeSent << endl;
+				
+				for (loopCnt = 0; loopCnt < 15; loopCnt++) {
+					if (loopCnt > 0) {
+						cout << ",";
+					}
+				
+					cout << values[loopCnt];
+				}
+			
+				cout << endl;
+			}
+			*/
+			
+			// There are multiple data feeders each reading the same LR data file.
+			// Each data feeder is configured to send data only for a particular range of expressways.
+			// For type 0 and type 3 events, we can apply that expressway range filter.
+			// For type 2 events, there is no expressway field. Hence, it will get sent to
+			// all the feeders and hence there will be duplicate account balance readings.
+			if ((values[0] == 0 || values[0] == 3) && 
+				(values[4] < startingExpressway || values[4] > endingExpressway)) {
+				// This car event is not in this data feeder's expressway range.
+				// Skip sending this car event to this data feeder.
+				lrEventDataToBeSent.clear();
+				continue;
+			}
+			
+			// Check if this event belongs to the current simulation second.
+			time(&currentTime);
+			//Calculate the elapsed time in second
+			ts = (int)difftime(currentTime, startTime);
+			
+			if (values[1] > ts) {
+				// This event is to be sent at a future time.
+				// Let us wait for that time to arrive.
+				// Break out of the inner while loop so that it can go back to the outer while loop.
+				break;
+			}			
+			
+			// We can feed the LR events either to a TCP capable built-in/primitive
+			// operator or to a kafa sink from here.
+			if (dataReceiver == "tcp") {
+				OPort0Type oTuple0;
+				// If we are here, that means this data feed will be received via a TCP capable
+				// Streams operator. We can form a full tuple with non-string attributes and send it.
+				// Let us now populate the IBM Streams tuple attributes and send it away.
+				ValueHandle handle0 = oTuple0.getAttributeValue(0);
+				int32 & eventType = handle0;
+				// We will assign this attribute to a value we got from the data provider.
+				eventType = values[0];
+
+				// Do a similar value assignment for the remaining attributes.
+				ValueHandle handle1 = oTuple0.getAttributeValue(1);
+				int32 & eventTimestamp = handle1;
+				eventTimestamp = values[1];
+				  
+				ValueHandle handle2 = oTuple0.getAttributeValue(2);
+				int32 & vehicleId = handle2;
+				vehicleId = values[2];
+
+				ValueHandle handle3 = oTuple0.getAttributeValue(3);
+				int32 & vehicleSpeed = handle3;
+				vehicleSpeed = values[3];
+
+				ValueHandle handle4 = oTuple0.getAttributeValue(4);
+				int32 & expressWayNumber = handle4;
+				expressWayNumber = values[4];
+
+				ValueHandle handle5 = oTuple0.getAttributeValue(5);
+				int32 & laneNumber = handle5;
+				laneNumber = values[5];
+
+				ValueHandle handle6 = oTuple0.getAttributeValue(6);
+				int32 & directionIndicator = handle6;	
+				directionIndicator = values[6];
+
+				ValueHandle handle7 = oTuple0.getAttributeValue(7);
+				int32 & segmentId = handle7;
+				segmentId = values[7];
+				  
+				ValueHandle handle8 = oTuple0.getAttributeValue(8);
+				int32 & vehiclePosition = handle8;
+				vehiclePosition = values[8];
+				  
+				ValueHandle handle9 = oTuple0.getAttributeValue(9);
+				int32 & queryId = handle9;
+				queryId = values[9];
+
+				ValueHandle handle10 = oTuple0.getAttributeValue(10);
+				int32 & startingSegment = handle10;
+				startingSegment = values[10];
+
+				ValueHandle handle11 = oTuple0.getAttributeValue(11);
+				int32 & endingSegment = handle11;
+				endingSegment = values[11];
+				  
+				ValueHandle handle12 = oTuple0.getAttributeValue(12);
+				int32 & dayOfWeek = handle12;
+				dayOfWeek = values[12];
+				  
+				ValueHandle handle13 = oTuple0.getAttributeValue(13);
+				int32 & minutesOfCurrentDay = handle13;
+				minutesOfCurrentDay = values[13];
+
+				ValueHandle handle14 = oTuple0.getAttributeValue(14);
+				int32 & dayInThePast = handle14;
+				dayInThePast = values[14];
+
+				submittedTuplesTotalCnt++;
+				///// Use the following line to debug the event messages that are being sent out.
+				///// SPLAPPTRC(L_ERROR, oTuple0, "_X_DF");					  
+				// Submit this tuple on the first output port.
+				submit(oTuple0, 0);
+				// We can clear the row we read from the file since it is now processed completely.
+				lrEventDataToBeSent.clear();
+			} else if (dataReceiver == "kafka") {
+				OPort1Type oTuple1;
+				// We will send a string formatted event to Kafka since it can't deal with non-string values.
+				// We can now populate the topic and the message attributes needed by the kafka producer operator.
+				ValueHandle handle0 = oTuple1.getAttributeValue(0);
+				rstring & kafkaMessage = handle0;
+				// We will assign this attribute to a value we received from the LR data provider.
+				kafkaMessage = lrEventDataToBeSent;
+				submittedTuplesTotalCnt++;
+
+				///// Use the following line to debug the event messages that are being sent out.
+				///// Following console print will allow us to do an exact comparison between
+				///// what gets sent from the LR data driver and the original contents present in the data set file.
+				///// Uncomment the following two lines as per your need.
+				// 
+				// Printing via cout will help us to get the exact dump of what is being sent out.
+				// We can simply compare that dump with the original data file to see if every event is
+				// going out in the exact same time order.
+				//
+				///// cout << str;
+				///// SPLAPPTRC(L_ERROR, oTuple1, "_X_DF");    				  
+				  
+				// We can submit it now on the second output port.
+				submit(oTuple1, 1);
+				// We can clear the row we read from the file since it is now processed completely.
+				lrEventDataToBeSent.clear();				  
+			} 
+		} // End of the inner while loop.
+				
+		numberOfTuplesSubmittedInThisTimeBlock = submittedTuplesTotalCnt - previousTotalOfSubmittedTuples;
+		previousTotalOfSubmittedTuples = submittedTuplesTotalCnt;
+
+		SPLAPPTRC(L_ERROR, ts << " seconds have passed. SE=" << startingExpressway << ", EE=" << endingExpressway << 
+			". Number of tuples submitted in this time block=" << numberOfTuplesSubmittedInThisTimeBlock <<
+			", Total number of tuples submitted thus far=" << submittedTuplesTotalCnt, "_X_DF");
+		
+		if(lrFile.eof() == true) {
+			SPLAPPTRC(L_ERROR, "End of file reached.", "_X_DF");
+			break;
+		}		
+	} // End of the outer while loop.
+	
+	lrFile.close();
+	SPLAPPTRC(L_ERROR, "******* END OF LINEAR ROAD PROCESSING (data feeder) *******", "X_DF");	
+}
+
+/*
+// ************************   IMPORTANT COMMENTED OUT METHOD  *****************************************
+// On Oct/08/2015, Senthil commented out this entire method and created a new process method as 
+// shown above. The original Linear Road Data Feeder code takes much more than 3 hours to emit the
+// 3 hours worth of traffic data. For bigger data sets, it even takes a lot more than 3 hours.
+// 
+// Looking through their code, it has a logic that is too elaborative for the required task of 
+// sending the LR events in bursts rather than continuously. It was decided to ignore their data feeder
+// code and write our own method as shown above to perform a similar logic as the original LR data feeder
+// code but with a much simpler file reading code. If someone wants to use LR data feeder code for
+// emitting the traffic data, then the method above can be commented out and the following
+// method can be uncommented and reinstated.
+// ***************************************************************************************************
+// Processing for source and threaded operators   
+void MY_OPERATOR::process(uint32_t idx)
+{
+	SPLAPPTRC(L_ERROR, "******* START OF LINEAR ROAD PROCESSING (data feeder) *******", "_X_DF");	
+	
+	if (dataReceiver == "none") {
+		// User doesn't want to read using the Linear Road data feeded logic.
+		// This is usually done for reading the LR data via a different operator such as the
+		// FileSource to make the debugging of the core LR SPL logic much faster.
+		SPLAPPTRC(L_ERROR, "User opted for not using the Linear Road data feeder logic with \"none\" option.", "X_DF");
+		SPLAPPTRC(L_ERROR, "******* END OF LINEAR ROAD PROCESSING (data feeder) *******", "X_DF");
+		return;
+	}
+	
+	// If user has asked us to do an initDelay, let us wait briefly now before proceeding.
+	if (initDelay > 0) {
+		sleep(initDelay);
+	}
+	
+	// A typical Source operator implementation will loop until shutdown
+	pthread_mutex_t  mutex_lock = PTHREAD_MUTEX_INITIALIZER;
+	char* dataFile = (char *)lrDataFile.c_str();
+	  
+	// Instantiate and initialize the Linear Road data provider.
+	CLRDataProvider* provider = new CLRDataProvider();
+	SPLAPPTRC(L_ERROR,
+		"Initializing the Linear Road data provider to read data from " << 
+		dataFile << " and send it via " << dataReceiver << ".", "_X_DF");
+	int32_t ret = provider->Initialize(dataFile, 10000, &mutex_lock);
+	  
+	if (ret != SUCCESS) {	
+		errorHandler(ret);
+		// Let us abort this operator.
+		SPL::Functions::Utility::abort("", 0);
+		return;
+	}
+	  
+	// Ask the provider to prepare the data.
+	if(provider->PrepareData(provider) != SUCCESS) {
+		SPLAPPTRC(L_ERROR, "Call to the provider's PrepareData method failed.", "_X_DF");
+		delete provider;
+		errorHandler(ret);
+		// Let us abort this operator.
+		SPL::Functions::Utility::abort("", 0);
+		return;    		  
+	}
+	  
+	int	nTuplesRead = 0;
+	int	nMaxTuples  = 100;
+	//Allocate caller's buffer
+	LPTuple lpTuples = new LRTuple[nMaxTuples ];    	  			
+	int seconds = 0;
+	uint64 submittedTuplesTotalCnt = 0;
+	
+	// We will stay here in this loop and keep feeding the
+	// Linear Road data to the rest of the Streams application topology. 
+    while(!getPE().getShutdownRequested()) {
+    	  // Get a random number between 5 and 15
+    	  srand(time(NULL));			  
+    	  int s =  (int) ((((double) rand())/ RAND_MAX) * 10) + 5;
+    	  // Sleep s seconds.
+    	  // Sleeping here allows us to send a burst of data to the downstream stream processing components and
+    	  // that will test the ability to handle periodic bursts. However, it also gives a chance for
+    	  // for those downstream components to be idle for several seconds routinely. This will help the Java based
+    	  // products enough time to do garbage collection thereby hiding certain sluggishness. 
+    	  //
+    	  // In addition, it would also be necessary to send a continuous stream of data at high volumes without
+    	  // any sleep and test whether the downstream stream processing components can sustain that continuous load.
+    	  // But, the designers of the Linear Road DataFeeder didn't do that for some unknown reasons.
+    	  //
+    	  sleep(s);
+    	  int32_t ret = 0;
+    	  int64_t eventCnt = 0;
+
+    	  for(;;) {
+    		  //Get the available data
+    		  ret = provider->GetData(lpTuples, nMaxTuples, nTuplesRead);
+
+    		  if (ret < 0) {
+    			  //Handle erros including eof
+    			  errorHandler(ret);
+    			  break;
+    		  }
+
+    		  if (nTuplesRead == 0) {
+    			  //No tuple available
+    			  break;
+    		  }
+    	  					
+    		  // Iterate over the data fetched from the provider and send it for further downstream processing.
+    		  for(int i = 0; i < nTuplesRead; i++) {
+    			  eventCnt++;
+
+    			  // We can feed the LR events either to a TCP capable built-in/primitive
+    			  // operator or to a kafa sink from here.
+    			  if (dataReceiver == "tcp") {
+    				  OPort0Type oTuple0;
+					  // If we are here, that means this data feed will be received via a TCP capable
+					  // Streams operator. We can form a full tuple with non-string attributes and send it.
+					  // Let us now populate the IBM Streams tuple attributes and send it away.
+					  ValueHandle handle0 = oTuple0.getAttributeValue(0);
+					  int32 & eventType = handle0;
+					  // We will assign this attribute to a value we got from the data provider.
+					  eventType = lpTuples[i].m_iType;
+	
+					  // Do a similar value assignment for the remaining attributes.
+					  ValueHandle handle1 = oTuple0.getAttributeValue(1);
+					  int32 & eventTimestamp = handle1;
+					  eventTimestamp = lpTuples[i].m_iTime;
+					  
+					  ValueHandle handle2 = oTuple0.getAttributeValue(2);
+					  int32 & vehicleId = handle2;
+					  vehicleId = lpTuples[i].m_iVid;
+	
+					  ValueHandle handle3 = oTuple0.getAttributeValue(3);
+					  int32 & vehicleSpeed = handle3;
+					  vehicleSpeed = lpTuples[i].m_iSpeed;
+	
+					  ValueHandle handle4 = oTuple0.getAttributeValue(4);
+					  int32 & expressWayNumber = handle4;
+					  expressWayNumber = lpTuples[i].m_iXway;
+	
+					  ValueHandle handle5 = oTuple0.getAttributeValue(5);
+					  int32 & laneNumber = handle5;
+					  laneNumber = lpTuples[i].m_iLane;
+	
+					  ValueHandle handle6 = oTuple0.getAttributeValue(6);
+					  int32 & directionIndicator = handle6;
+					  directionIndicator = lpTuples[i].m_iDir;
+	
+					  ValueHandle handle7 = oTuple0.getAttributeValue(7);
+					  int32 & segmentId = handle7;
+					  segmentId = lpTuples[i].m_iSeg;
+					  
+					  ValueHandle handle8 = oTuple0.getAttributeValue(8);
+					  int32 & vehiclePosition = handle8;
+					  vehiclePosition = lpTuples[i].m_iPos;
+					  
+					  ValueHandle handle9 = oTuple0.getAttributeValue(9);
+					  int32 & queryId = handle9;
+					  queryId = lpTuples[i].m_iQid;
+	
+					  ValueHandle handle10 = oTuple0.getAttributeValue(10);
+					  int32 & startingSegment = handle10;
+					  startingSegment = lpTuples[i].m_iSinit;
+	
+					  ValueHandle handle11 = oTuple0.getAttributeValue(11);
+					  int32 & endingSegment = handle11;
+					  endingSegment = lpTuples[i].m_iSend;
+					  
+					  ValueHandle handle12 = oTuple0.getAttributeValue(12);
+					  int32 & dayOfWeek = handle12;
+					  dayOfWeek = lpTuples[i].m_iDow;
+					  
+					  ValueHandle handle13 = oTuple0.getAttributeValue(13);
+					  int32 & minutesOfCurrentDay = handle13;
+					  minutesOfCurrentDay = lpTuples[i].m_iTod;
+	
+					  ValueHandle handle14 = oTuple0.getAttributeValue(14);
+					  int32 & dayInThePast = handle14;
+					  dayInThePast = lpTuples[i].m_iDay;
+
+    				  ///// Use the following line to debug the event messages that are being sent out.
+    				  ///// SPLAPPTRC(L_ERROR, oTuple0, "_X_DF");					  
+					  
+					  // Submit this tuple on the first output port.
+					  submit(oTuple0, 0);
+					  submittedTuplesTotalCnt++;
+					  // Continue with the next iteration of the for loop.
+					  continue;
+    			  } else if (dataReceiver == "kafka") {
+    				  OPort1Type oTuple1;
+    				  // We will send a string formatted event to Kafka since it can't deal with non-string values.
+    				  char* str = lpTuples[i].ToString();
+        			             			     
+    				  // We can now populate the topic and the message attributes needed by the kafka producer operator.
+    				  ValueHandle handle0 = oTuple1.getAttributeValue(0);
+    				  rstring & kafkaMessage = handle0;
+    				  // We will assign this attribute to a value we received from the LR data provider.
+    				  kafkaMessage = string(str);
+    				  
+    				  ///// Use the following line to debug the event messages that are being sent out.
+    				  ///// Following console print will allow us to do an exact comparison between
+    				  ///// what gets sent from the LR data driver and the original contents present in the data set file.
+    				  ///// Uncomment the following two lines as per your need.
+    				  // 
+    				  // Printing via cout will help us to get the exact dump of what is being sent out.
+    				  // We can simply compare that dump with the original data file to see if every event is
+    				  // going out in the exact same time order.
+    				  //
+    				  ///// cout << str;
+    				  ///// SPLAPPTRC(L_ERROR, oTuple1, "_X_DF");    				  
+    				  
+    				  // We must clean up the object we got back from the LR data provider. 
+    				  delete str;    			     
+    				  // We can submit it now on the second output port.
+    				  submit(oTuple1, 1);
+    				  submittedTuplesTotalCnt++;
+    				  // Continue with the next iteration of the for loop.
+    				  continue;
+    			  } 
+    		  } // End of the for loop iterating over the lpTuples array.
+
+    		  if (nTuplesRead < nMaxTuples) {
+    			  //Last tuple has been read
+    			  break;
+    		  }
+    	  } // End of the outer for loop. 
+
+    	  if (ret < SUCCESS) {				
+    		  break;
+    	  }
+
+    	  seconds += s;
+    	  // SPLAPPTRC(L_ERROR, seconds << " seconds have passed. Number of tuples submitted=" << submittedTuplesTotalCnt, "_X_DF");
+      } // End of while loop
+
+      //Uninitialize the provider
+      SPLAPPTRC(L_ERROR, "Uninitializing the Linear Road data provider ...", "_X_DF");
+      provider->Uninitialize();
+      delete provider;
+      delete [] lpTuples;
+      SPLAPPTRC(L_ERROR, "******* END OF LINEAR ROAD PROCESSING (data feeder) *******", "X_DF");
+}
+*/
+
+// Tuple processing for mutating ports 
+void MY_OPERATOR::process(Tuple & tuple, uint32_t port)
+{
+    // Sample submit code
+    /* 
+      submit(otuple, 0); // submit to output port 0
+    */
+}
+
+// Tuple processing for non-mutating ports
+void MY_OPERATOR::process(Tuple const & tuple, uint32_t port)
+{
+    // Sample submit code
+    /* 
+      OPort0Type otuple;
+      submit(otuple, 0); // submit to output port 0
+    */
+}
+
+// Punctuation processing
+void MY_OPERATOR::process(Punctuation const & punct, uint32_t port)
+{
+    /*
+      if(punct==Punctuation::WindowMarker) {
+        // ...;
+      } else if(punct==Punctuation::FinalMarker) {
+        // ...;
+      }
+    */
+}
+
+// Error handler for the Linear Road data provider
+void MY_OPERATOR::errorHandler(int32_t nErrorCode)
+{
+	switch(nErrorCode)
+	{
+		case END_OF_FILE:
+			{
+				SPLAPPTRC(L_ERROR, "End of data file", "_X_DF");
+			}
+			break;
+		case ERROR_FILE_NOT_FOUND:
+			{	
+				SPLAPPTRC(L_ERROR, "Data file not found. Check data file path name.", "_X_DF");
+			}
+			break;
+		case ERROR_INVALID_FILE:
+			{
+				SPLAPPTRC(L_ERROR, "Invalid file handler. Restart the system.", "_X_DF");
+			}
+			break;
+		case ERROR_BUFFER_OVERFLOW:
+			{
+				SPLAPPTRC(L_ERROR, "Buffer over flow. Increase the buffer size.", "_X_DF");
+			}
+			break;
+		default:
+			{
+				SPLAPPTRC(L_ERROR, "Programming error.", "_X_DF");
+			}
+			break;
+	}
+}
+
+<%SPL::CodeGen::implementationEpilogue($model);%>
+

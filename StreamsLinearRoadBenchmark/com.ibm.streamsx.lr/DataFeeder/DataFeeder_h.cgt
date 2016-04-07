@@ -1,0 +1,51 @@
+// *******************************************************************************
+// * Copyright (C) 2016 International Business Machines Corporation
+// * All Rights Reserved
+// *******************************************************************************
+
+/* Additional includes go here */
+
+<%SPL::CodeGen::headerPrologue($model);%>
+
+class MY_OPERATOR : public MY_BASE_OPERATOR 
+{
+public:
+  // Constructor
+  MY_OPERATOR();
+
+  // Destructor
+  virtual ~MY_OPERATOR(); 
+
+  // Notify port readiness
+  void allPortsReady(); 
+
+  // Notify pending shutdown
+  void prepareToShutdown(); 
+
+  // Processing for source and threaded operators   
+  void process(uint32_t idx);
+    
+  // Tuple processing for mutating ports 
+  void process(Tuple & tuple, uint32_t port);
+    
+  // Tuple processing for non-mutating ports
+  void process(Tuple const & tuple, uint32_t port);
+  
+  // Error handler for the Linear Road data provider.
+  void errorHandler(int32_t nErrorCode);
+
+  // Punctuation processing
+  void process(Punctuation const & punct, uint32_t port);
+private:
+  // Define application-specific member variables to
+  // control the operator parameters that will be
+  // passed from the SPL file.
+  uint32 initDelay;
+  rstring lrDataFile;
+  rstring dataReceiver;
+  uint32 startingExpressway;
+  uint32 endingExpressway;
+};
+
+<%SPL::CodeGen::headerEpilogue($model);%>
+
