@@ -14,7 +14,7 @@ Following are the steps to run the Linear road application using IBM Streams.
 1) This application requires Redis server (2.8.x) to be installed on at least five machines with at least 100 GB free memory on each of those machines. Please install Redis server (2.8.x) on five machines before proceeding to the next step.
 
 
-2) Ensure that the Streams domain and Streams instances are started and they are in running with no network or machine problems.
+2) Ensure that the Streams domain and Streams instance are started and they are in running state with no network or machine problems.
    You can use the two commands mentioned below in steps (d) and steps (e) to check if your Streams domain and instance are 
    up and running fine.
    
