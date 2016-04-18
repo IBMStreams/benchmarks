@@ -1,0 +1,19 @@
+Before doing anything with the IBM Streams Linear Road application, libLRDataProvider.so file must be created by following the steps described below:
+
+1) In a terminal window, ensure that you are in the following directory.
+   StreamsLinearRoadBenchmark/impl/src/lr-data-driver/data-driver-lib
+
+2) Run the following command to compile the LR data driver:
+
+   g++ -g -O3 -Wall -fPIC -D_REENTRANT -c LRDataProvider.cpp MemTuples.cpp Tuple.cpp
+
+3) Run the following command to create a LR data driver shared object library:
+
+   g++ -shared -o libLRDataProvider.so MemTuples.o Tuple.o LRDataProvider.o
+
+4) Run the following commands to move the newly created .so file to the correct impl/lib directory:
+
+   mkdir  ../../../lib
+   mv ./libLRDataProvider.so ../../../lib
+
+ 
