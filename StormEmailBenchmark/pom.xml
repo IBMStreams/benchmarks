@@ -20,7 +20,7 @@
 		<storm.version>0.8.2</storm.version>
         <junit.version>3.8.1</junit.version>
         <avro.version>1.7.4</avro.version>
-        <commons.version>3.2.1</commons.version>
+        <commons.version>3.2.2</commons.version>
         <log4j.version>1.2.16</log4j.version>
         <logback.version>1.0.6</logback.version>
         <mail.version>1.4.7</mail.version>
