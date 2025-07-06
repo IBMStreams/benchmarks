@@ -1,7 +1,7 @@
 ## README --  IBMStreams/benchmarks/StreamsLinearRoadBenchmark
 
 # Note from the toolkit author
-This benchmark was created by Senthil Nathan. He created it on his own initiative and interest to convince a large U.S based retail customer to adopt IBM Streams. He is now an independent software consultant. To benefit from  this asset, for any enhancements, any need for a new powerful toolkit as well as for creating new streaming data analytics solutions, customers can email senthil@moonraytech.com to reach him. Thank you.
+This benchmark was created by Senthil Nathan. He created it on his own initiative, intellectual ideas and interest in an attempt to convince a large U.S based retail customer to adopt IBM Streams. He is now an independent software consultant. To benefit from  this asset, for any enhancements, any need for a new powerful toolkit as well as for creating new streaming data analytics solutions, customers can email senthil@moonraytech.com to reach him. Thank you.
 
 Linear Road Benchmark is a publicly available specification developed by these academic institutions: MIT, Brown, Brandeis and Stanford.
 
