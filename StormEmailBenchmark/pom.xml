@@ -22,7 +22,7 @@
         <avro.version>1.7.4</avro.version>
         <commons.version>3.2.2</commons.version>
         <log4j.version>1.2.16</log4j.version>
-        <logback.version>1.0.6</logback.version>
+        <logback.version>1.2.0</logback.version>
         <mail.version>1.4.7</mail.version>
         <lang.commons.version>3.3.2</lang.commons.version>
 	</properties>
